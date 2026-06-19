@@ -81,8 +81,11 @@ async fn main() {
     let mut heat_overlay = false;
     // Frames to ignore resize detection after we programmatically resize (load).
     let mut resize_grace = 0i32;
-    let save_path = desktop_path("pwdr.save");
     let showcase_path = desktop_path("pwdr-showcase.save");
+    let desktop_dir = showcase_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| ".".into());
 
     loop {
         let sim_px_w = gw as f32 * SCALE;
@@ -157,16 +160,26 @@ async fn main() {
             grid = Grid::new(gw, gh, SEED);
             status = "cleared".into();
         }
+        // F5 = save-as dialog. Native file picker; default to the Desktop.
         if is_key_pressed(KeyCode::F5) {
-            match std::fs::write(&save_path, grid.serialize()) {
-                Ok(_) => status = format!("saved {}", save_path.display()),
-                Err(e) => status = format!("save failed: {e}"),
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("pwdr map", &["save"])
+                .set_directory(&desktop_dir)
+                .set_file_name("map.save")
+                .save_file()
+            {
+                match std::fs::write(&path, grid.serialize()) {
+                    Ok(_) => status = format!("saved {}", path.display()),
+                    Err(e) => status = format!("save failed: {e}"),
+                }
             }
         }
-        // F9 = load quicksave, F8 = load the element showcase. Both restore the
-        // saved grid at its original size and resize the window to fit.
+        // F9 = open dialog (pick any map), F8 = load the bundled showcase.
         let load_req = if is_key_pressed(KeyCode::F9) {
-            Some(save_path.clone())
+            rfd::FileDialog::new()
+                .add_filter("pwdr map", &["save"])
+                .set_directory(&desktop_dir)
+                .pick_file()
         } else if is_key_pressed(KeyCode::F8) {
             Some(showcase_path.clone())
         } else {
@@ -181,14 +194,16 @@ async fn main() {
                     let (ni, nt) = make_texture(gw, gh);
                     image = ni;
                     texture = nt;
-                    // Resize the window to the loaded map and skip the wipe prompt
-                    // while it settles.
+                    // Resize the window to the loaded map (skip the wipe prompt
+                    // while it settles) and start PAUSED so nothing reacts until
+                    // the user is ready.
                     let (tw, th) = (gw as f32 * SCALE + PANEL_W, gh as f32 * SCALE);
                     request_new_screen_size(tw, th);
                     win_w = tw;
                     win_h = th;
                     resize_grace = 20;
-                    status = format!("loaded {} ({gw}x{gh})", path.display());
+                    paused = true;
+                    status = format!("loaded {} ({gw}x{gh}) — PAUSED", path.display());
                 }
                 None => status = format!("load failed: {}", path.display()),
             }
