@@ -364,8 +364,17 @@ async fn main() {
         );
 
         if !in_panel && !over_mm {
-            let r = brush as f32 * psc + psc * 0.5;
-            draw_circle_lines(mx, my, r, 1.0, Color::from_rgba(255, 255, 255, 120));
+            if brush == 0 {
+                // Smallest brush: a single-cell square snapped to the grid.
+                let gx = (view_x + mx / psc).floor();
+                let gy = (view_y + my / psc).floor();
+                let sx = (gx - view_x) * psc;
+                let sy = (gy - view_y) * psc;
+                draw_rectangle_lines(sx, sy, psc, psc, 1.0, Color::from_rgba(255, 255, 255, 160));
+            } else {
+                let r = brush as f32 * psc + psc * 0.5;
+                draw_circle_lines(mx, my, r, 1.0, Color::from_rgba(255, 255, 255, 120));
+            }
         }
 
         // Minimap overview + viewport box (only useful when zoomed in).
