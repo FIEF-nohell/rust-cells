@@ -14,6 +14,8 @@ const SCALE: f32 = 3.0; // screen pixels per cell
 const PANEL_W: f32 = 248.0;
 const SEED: u64 = 0xC0FFEE;
 const MAX_BRUSH: usize = 64;
+/// Height of the bottom control bar, reserved below the canvas.
+const BAR_H: f32 = 26.0;
 /// Y where the scrollable element list begins (below the panel header).
 const PANEL_LIST_TOP: f32 = 96.0;
 
@@ -65,7 +67,7 @@ fn window_conf() -> Conf {
         window_title: "rust-cells".to_owned(),
         // Default canvas: 400 wide x 250 tall cells (plus the side panel).
         window_width: (400.0 * SCALE + PANEL_W) as i32,
-        window_height: (250.0 * SCALE) as i32,
+        window_height: (250.0 * SCALE + BAR_H) as i32,
         window_resizable: true,
         icon: Some(make_icon()),
         ..Default::default()
@@ -138,9 +140,10 @@ fn swatch(id: MaterialId) -> Color {
 
 /// Cell grid dimensions that fit the current window (leaving room for the panel).
 fn grid_dims(win_w: f32, win_h: f32) -> (usize, usize) {
-    let avail = (win_w - PANEL_W).max(SCALE * 16.0);
-    let gw = (avail / SCALE).floor() as usize;
-    let gh = (win_h / SCALE).floor() as usize;
+    let avail_w = (win_w - PANEL_W).max(SCALE * 16.0);
+    let avail_h = (win_h - BAR_H).max(SCALE * 16.0);
+    let gw = (avail_w / SCALE).floor() as usize;
+    let gh = (avail_h / SCALE).floor() as usize;
     (gw.max(16), gh.max(16))
 }
 
@@ -184,6 +187,7 @@ async fn main() {
 
     loop {
         let panel_x = screen_width() - PANEL_W;
+        let canvas_h = (screen_height() - BAR_H).max(1.0); // sim area height (bar below)
 
         // --- window resize: prompt before wiping (skip during load grace) ---
         // Ignore minimize / bogus tiny sizes so restoring doesn't trigger a wipe.
@@ -283,7 +287,7 @@ async fn main() {
             }
         }
         // Reliable keyboard zoom (no modifier): +/- and 0 to reset.
-        let (cx, cy) = (panel_x * 0.5, screen_height() * 0.5);
+        let (cx, cy) = (panel_x * 0.5, canvas_h * 0.5);
         if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
             apply_zoom(&mut zoom, &mut view_x, &mut view_y, cx, cy, 1.25);
         }
@@ -298,7 +302,7 @@ async fn main() {
 
         let psc = SCALE * zoom; // recompute after any zoom change
         let vis_w = panel_x / psc;
-        let vis_h = screen_height() / psc;
+        let vis_h = canvas_h / psc;
 
         // Minimap (overview) in the top-right of the canvas; click/drag to navigate.
         let mm_box = 150.0;
@@ -368,7 +372,7 @@ async fn main() {
                     // Resize the window to the loaded map (skip the wipe prompt
                     // while it settles) and start PAUSED so nothing reacts until
                     // the user is ready.
-                    let (tw, th) = (gw as f32 * SCALE + PANEL_W, gh as f32 * SCALE);
+                    let (tw, th) = (gw as f32 * SCALE + PANEL_W, gh as f32 * SCALE + BAR_H);
                     request_new_screen_size(tw, th);
                     win_w = tw;
                     win_h = th;
@@ -398,6 +402,7 @@ async fn main() {
         }
         let painting = !in_panel
             && !over_mm
+            && my < canvas_h
             && (is_mouse_button_down(MouseButton::Left)
                 || is_mouse_button_down(MouseButton::Right));
         if painting {
@@ -464,7 +469,7 @@ async fn main() {
             },
         );
 
-        if !in_panel && !over_mm {
+        if !in_panel && !over_mm && my < canvas_h {
             if brush == 0 {
                 // Smallest brush: a single-cell square snapped to the grid.
                 let gx = (view_x + mx / psc).floor();
@@ -531,7 +536,7 @@ async fn main() {
             view_y,
             psc,
             panel_x,
-            screen_height(),
+            canvas_h,
         );
 
         next_frame().await;
@@ -762,26 +767,18 @@ fn draw_hud(
         }
     }
 
-    // --- bottom control bar ---
-    let bar_h = 26.0;
-    draw_rectangle(0.0, sim_h - bar_h, sim_w, bar_h, cola(14, 15, 20, 220));
-    draw_line(
-        0.0,
-        sim_h - bar_h,
-        sim_w,
-        sim_h - bar_h,
-        1.0,
-        cola(70, 74, 90, 160),
-    );
+    // --- bottom control bar (reserved strip below the canvas, not over it) ---
+    draw_rectangle(0.0, sim_h, sim_w, BAR_H, c_header());
+    draw_line(0.0, sim_h, sim_w, sim_h, 1.0, cola(70, 74, 90, 200));
     draw_text(
         "L paint   R erase   wheel brush   +/- zoom   0 reset   mid-drag/minimap pan   Space pause   F2 heat   F5/F9 save/load   F8 showcase",
         10.0,
-        sim_h - 8.0,
+        sim_h + 17.0,
         15.0,
         c_muted(),
     );
     if !status.is_empty() {
-        draw_text(status, sim_w - 230.0, sim_h - 8.0, 15.0, col(150, 210, 150));
+        draw_text(status, sim_w - 230.0, sim_h + 17.0, 15.0, col(150, 210, 150));
     }
 }
 
