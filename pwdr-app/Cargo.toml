@@ -1,0 +1,8 @@
+[package]
+name = "pwdr-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pwdr-core = { path = "../pwdr-core" }
+macroquad = "0.4"

@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["pwdr-core", "pwdr-app"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[profile.bench]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
