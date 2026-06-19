@@ -13,7 +13,7 @@ Living log of decisions, roster, test status, perf numbers. One section per mile
 | M4 Gases | ✅ done | 22 unit + proptest |
 | M5 Temperature & transitions | ✅ done | 30 unit + proptest |
 | M6 Reactions & energy | ✅ done | 35 unit + proptest |
-| M7 Full roster | ⏳ | |
+| M7 Full roster | ✅ done | 40 unit + 2 proptest |
 | M8 App polish | ⏳ | |
 | M9 Threading | ⏳ | |
 
@@ -186,3 +186,52 @@ steam; acid dissolves solid + is consumed; spark conducts end-to-end then settle
 restored, grid sleeps); spark ignites oil.
 
 **App:** +Q Copper, E Spark, F Fire, C Acid.
+
+---
+
+## M7 — Full roster ✅
+
+### The roster (20 materials incl. Empty)
+
+| # | Name | Phase | Defining behavior |
+|---|------|-------|-------------------|
+| 0 | Empty | — | vacuum / air (carries ambient temperature) |
+| 1 | Stone | Solid | inert wall, blast-proof |
+| 2 | Sand | Powder | inert heavy powder; melts to **Glass** at 1100°C |
+| 3 | Water | Liquid | seeks level; freezes→Ice@0, boils→Steam@100 |
+| 4 | Oil | Liquid | **floats on water** (ρ800<1000); flammable, autoignites@350 |
+| 5 | Smoke | Gas | rises; **finite life**→fades to Empty |
+| 6 | Ice | Solid | melts→Water@0 |
+| 7 | Steam | Gas | rises; **condenses**→Water@99 |
+| 8 | Lava | Liquid | hot (1200°); **cools→Basalt@500** (e.g. on water) |
+| 9 | Basalt | Solid | remelts→Lava@1000 |
+| 10 | Copper | Solid | **conductor** (electrical + thermal) |
+| 11 | Spark | Energy | travels along copper, leaves refractory Charged trail |
+| 12 | Charged | Solid | spark's refractory trail → back to Copper |
+| 13 | Fire | Gas | **spreads**, finite life, byproduct **Smoke** |
+| 14 | Acid | Liquid | **corrosive**: dissolves solids, is consumed |
+| 15 | Fume | Gas | **flammable gas**, propagates fire upward |
+| 16 | Gunpowder | Powder | **explosive**: blast radius 4, chain-detonates |
+| 17 | Cryo | Solid | **cold source**: freezes adjacent water→Ice |
+| 18 | Wood | Solid | **flammable solid**: fire creeps along it |
+| 19 | Glass | Solid | inert; melt product of sand, remelts@1450 |
+
+### Reaction web (data-driven, `material::REACTIONS` + temperature transitions + blast hook)
+Combustion (Fire+Oil/Fume/Wood), quench (Fire+Water→Smoke+Steam), conduction
+(Spark+Copper), ignition (Spark+Oil/Fume→Fire), corrosion (Acid+Sand/Stone/Copper/
+Basalt/Wood→consumed), freezing (Cryo+Water→Ice), explosion (Fire/Spark + Gunpowder →
+radial blast, chains). Phase transitions: freeze/melt/boil/condense/solidify/remelt/
+sand-melt — all threshold-driven on the temperature field.
+
+**Archetype checklist (all covered):** inert + reactive powder (Sand, Gunpowder); two
+liquids with float ordering (Oil/Water); corrosive consumed (Acid); hot-cools-to-solid
+(Lava→Basalt on water); flammable liquid + gas (Oil, Fume); explosive (Gunpowder);
+rising gas that fades (Smoke) + one that condenses (Steam); fire w/ byproduct (Fire→Smoke);
+conductor + traveling spark (Copper/Spark); cold source (Cryo).
+
+**Tests (40 unit + 2 proptest):** one defining-behavior test per new element
+(fume propagation, gunpowder radial blast, cryo freezing, wood burning, sand→glass) plus
+all prior. New **full-roster fuzz proptest**: random ops over *every* material + random
+ticks never panic / never corrupt ids.
+
+**App:** keys 1–9 + Q/E/F/C/G/T/Z/V/B cover the roster (proper palette UI in M8).

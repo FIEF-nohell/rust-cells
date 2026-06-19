@@ -3,8 +3,8 @@
 
 use macroquad::prelude::*;
 use pwdr_core::material::{
-    self, ACID, BASALT, COPPER, EMPTY, FIRE, ICE, LAVA, OIL, SAND, SMOKE, SPARK, STEAM, STONE,
-    WATER,
+    self, ACID, BASALT, COPPER, CRYO, EMPTY, FIRE, FUME, GLASS, GUNPOWDER, ICE, LAVA, OIL, SAND,
+    SMOKE, SPARK, STEAM, STONE, WATER, WOOD,
 };
 use pwdr_core::Grid;
 
@@ -77,6 +77,21 @@ async fn main() {
         }
         if is_key_pressed(KeyCode::C) {
             selected = ACID;
+        }
+        if is_key_pressed(KeyCode::G) {
+            selected = GUNPOWDER;
+        }
+        if is_key_pressed(KeyCode::T) {
+            selected = FUME;
+        }
+        if is_key_pressed(KeyCode::Z) {
+            selected = CRYO;
+        }
+        if is_key_pressed(KeyCode::V) {
+            selected = WOOD;
+        }
+        if is_key_pressed(KeyCode::B) {
+            selected = GLASS;
         }
         // Brush size.
         if is_key_pressed(KeyCode::LeftBracket) && brush > 0 {

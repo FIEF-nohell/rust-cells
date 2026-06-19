@@ -58,4 +58,31 @@ proptest! {
         prop_assert!(all_ids_valid(&g), "material id went out of range");
         prop_assert_eq!(nonempty(&g), before, "movement must conserve mass");
     }
+
+    /// The whole roster under fuzzing — reactions, explosions, transitions, heat.
+    /// No conservation claim here (reactions/life consume), but the core must
+    /// never panic, never write OOB, and never hold an invalid id.
+    #[test]
+    fn full_roster_never_panics_or_corrupts(
+        w in 4usize..48,
+        h in 4usize..48,
+        seed: u64,
+        ops in proptest::collection::vec(
+            // any material id in the table, including fire/spark/acid/gunpowder
+            (0u16..1000, 0u16..1000, 0usize..5, 0u8..(material::MATERIALS.len() as u8)),
+            0..20,
+        ),
+        ticks in 0u32..150,
+    ) {
+        let mut g = Grid::new(w, h, seed);
+        for (xf, yf, r, m) in &ops {
+            let x = ((*xf as usize * w) / 1000).min(w - 1);
+            let y = ((*yf as usize * h) / 1000).min(h - 1);
+            g.paint(x, y, *r, *m as MaterialId);
+        }
+        for _ in 0..ticks {
+            g.step();
+        }
+        prop_assert!(all_ids_valid(&g), "material id went out of range");
+    }
 }

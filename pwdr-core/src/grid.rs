@@ -302,6 +302,21 @@ impl Grid {
                                 continue; // neighbour already reacted/moved
                             }
                             let b = self.cells[nidx].material;
+
+                            // Explosive ignition: contact with fire/spark detonates.
+                            let igniter = |m| m == material::FIRE || m == material::SPARK;
+                            let ra = material::explosive_radius(a);
+                            let rb = material::explosive_radius(b);
+                            if ra > 0 && igniter(b) {
+                                self.explode(x, y, ra as isize);
+                                break;
+                            }
+                            if rb > 0 && igniter(a) {
+                                self.explode(nx, ny, rb as isize);
+                                self.touch(x, y);
+                                break;
+                            }
+
                             if let Some(r) = material::reaction_for(a, b) {
                                 if self.temp[i] >= r.min_temp && self.rng.chance(r.prob) {
                                     self.transform(x, y, r.a_to);
@@ -312,6 +327,40 @@ impl Grid {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Detonate at (cx,cy): convert every cell within `r` (disc) to fire, except
+    /// blast-proof stone. Other explosives caught in the blast chain-detonate.
+    /// Iterative (work-stack) so a long fuse of explosives can't overflow the
+    /// stack; the per-tick gen tag ensures each cell detonates at most once.
+    fn explode(&mut self, cx: usize, cy: usize, r: isize) {
+        let mut stack = vec![(cx, cy, r)];
+        while let Some((cx, cy, r)) = stack.pop() {
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    if dx * dx + dy * dy > r * r {
+                        continue;
+                    }
+                    let x = cx as isize + dx;
+                    let y = cy as isize + dy;
+                    if !self.in_bounds(x, y) {
+                        continue;
+                    }
+                    let (x, y) = (x as usize, y as usize);
+                    let m = self.material_at(x, y);
+                    if m == material::STONE {
+                        continue; // blast-proof
+                    }
+                    let chain = material::explosive_radius(m);
+                    let already = self.cells[self.idx(x, y)].gen == self.gen;
+                    self.transform(x, y, material::FIRE);
+                    self.touch(x, y);
+                    if chain > 0 && !already {
+                        stack.push((x, y, chain as isize));
                     }
                 }
             }
@@ -333,11 +382,11 @@ impl Grid {
         self.cells[i].material = to;
         self.cells[i].life = new_life;
         self.cells[i].gen = self.gen;
+        // A reaction releases/absorbs latent heat: the product takes its own
+        // default temperature (hot fire heats, frozen ice stays cold and doesn't
+        // instantly melt). Empty keeps the ambient temperature already present.
         if to != EMPTY {
-            let dt = material::props(to).default_temp;
-            if dt > self.temp[i] {
-                self.temp[i] = dt;
-            }
+            self.temp[i] = material::props(to).default_temp;
         }
     }
 
@@ -718,8 +767,8 @@ pub fn can_move_into(mover: MaterialId, target: MaterialId, dy: isize) -> bool {
 mod tests {
     use super::*;
     use crate::material::{
-        ACID, BASALT, CHARGED, COPPER, FIRE, ICE, LAVA, OIL, SAND, SMOKE, SPARK, STEAM, STONE,
-        WATER,
+        ACID, BASALT, CHARGED, COPPER, CRYO, FIRE, FUME, GLASS, GUNPOWDER, ICE, LAVA, OIL, SAND,
+        SMOKE, SPARK, STEAM, STONE, WATER, WOOD,
     };
 
     #[test]
@@ -1238,6 +1287,115 @@ mod tests {
             }
         }
         assert!(saw_fire, "spark ignited adjacent oil");
+    }
+
+    // --- M7 full-roster element tests ---
+
+    #[test]
+    fn fume_propagates_fire() {
+        let mut g = Grid::new(10, 10, 3);
+        for y in 0..10 {
+            for x in 0..10 {
+                if x == 0 || y == 0 || x == 9 || y == 9 {
+                    g.set(x, y, STONE);
+                }
+            }
+        }
+        for y in 1..9 {
+            for x in 1..9 {
+                g.set(x, y, FUME);
+            }
+        }
+        let fume0 = g.count(FUME);
+        g.set(5, 5, FIRE);
+        let mut saw_fire_spread = false;
+        for _ in 0..120 {
+            g.step();
+            if g.count(FIRE) > 1 {
+                saw_fire_spread = true;
+            }
+        }
+        assert!(saw_fire_spread, "fire propagated through fume");
+        assert!(g.count(FUME) < fume0 / 2, "fume largely consumed");
+    }
+
+    #[test]
+    fn gunpowder_explodes_in_a_radius() {
+        let mut g = Grid::new(20, 20, 1);
+        for y in 6..11 {
+            for x in 6..11 {
+                g.set(x, y, GUNPOWDER); // 5x5 cluster = 25
+            }
+        }
+        let gp0 = g.count(GUNPOWDER);
+        g.set(5, 8, FIRE); // ignite at the edge
+        // A couple of ticks lets the chain finish.
+        for _ in 0..4 {
+            g.step();
+        }
+        assert_eq!(g.count(GUNPOWDER), 0, "all gunpowder detonated");
+        assert!(
+            g.count(FIRE) >= gp0,
+            "blast turned a radius into fire (>= cluster size): {}",
+            g.count(FIRE)
+        );
+    }
+
+    #[test]
+    fn cryo_freezes_adjacent_water() {
+        let mut g = Grid::new(6, 6, 2);
+        for y in 0..6 {
+            for x in 0..6 {
+                g.set(x, y, STONE);
+            }
+        }
+        // Fill the interior with water so it can't drain away, then embed cryo.
+        for y in 1..5 {
+            for x in 1..5 {
+                g.set(x, y, WATER);
+            }
+        }
+        g.set(2, 2, CRYO);
+        g.set(3, 3, CRYO);
+        let mut saw_ice = false;
+        for _ in 0..100 {
+            g.step();
+            if g.count(ICE) > 0 {
+                saw_ice = true;
+                break;
+            }
+        }
+        assert!(saw_ice, "cryo froze adjacent water to ice");
+    }
+
+    #[test]
+    fn wood_burns_away() {
+        let mut g = Grid::new(10, 10, 5);
+        for y in 0..10 {
+            for x in 0..10 {
+                if x == 0 || y == 0 || x == 9 || y == 9 {
+                    g.set(x, y, STONE);
+                }
+            }
+        }
+        for y in 1..9 {
+            for x in 1..9 {
+                g.set(x, y, WOOD);
+            }
+        }
+        let wood0 = g.count(WOOD);
+        g.set(4, 4, FIRE);
+        for _ in 0..1500 {
+            g.step();
+        }
+        assert!(g.count(WOOD) < wood0, "wood burned (at least partially)");
+    }
+
+    #[test]
+    fn sand_melts_to_glass_when_hot() {
+        let (mut g, x, y) = boxed(SAND, 1200.0);
+        g.step();
+        assert_eq!(g.material_at(x, y), GLASS, "molten sand -> glass");
     }
 
     #[test]

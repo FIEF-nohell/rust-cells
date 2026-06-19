@@ -64,6 +64,11 @@ pub const SPARK: MaterialId = 11;
 pub const CHARGED: MaterialId = 12;
 pub const FIRE: MaterialId = 13;
 pub const ACID: MaterialId = 14;
+pub const FUME: MaterialId = 15;
+pub const GUNPOWDER: MaterialId = 16;
+pub const CRYO: MaterialId = 17;
+pub const WOOD: MaterialId = 18;
+pub const GLASS: MaterialId = 19;
 
 const NEVER_HOT: f32 = f32::INFINITY;
 const NEVER_COLD: f32 = f32::NEG_INFINITY;
@@ -113,8 +118,8 @@ pub static MATERIALS: &[MaterialProps] = &[
         decay_to: EMPTY,
         default_temp: 20.0,
         conductivity: 0.06,
-        high_temp: NEVER_HOT,
-        high_to: EMPTY,
+        high_temp: 1100.0, // melts to glass (e.g. against lava)
+        high_to: GLASS,
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
@@ -312,7 +317,97 @@ pub static MATERIALS: &[MaterialProps] = &[
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
+    MaterialProps {
+        name: "Fume",
+        phase: Phase::Gas, // flammable gas, rises and propagates fire
+        density: -40,
+        color: [150, 170, 90],
+        color_jitter: 18,
+        dispersion: 6,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.05,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Gunpowder",
+        phase: Phase::Powder, // reactive, explosive powder
+        density: 1700,
+        color: [55, 55, 60],
+        color_jitter: 14,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.06,
+        high_temp: 300.0, // autoignites (then explodes via the blast hook)
+        high_to: FIRE,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Cryo",
+        phase: Phase::Solid, // persistent cold source
+        density: 9000,
+        color: [150, 200, 220],
+        color_jitter: 10,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: -50.0,
+        conductivity: 0.20,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Wood",
+        phase: Phase::Solid, // flammable structural solid
+        density: 9000,
+        color: [120, 80, 40],
+        color_jitter: 16,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.05,
+        high_temp: 400.0, // chars/ignites when very hot
+        high_to: FIRE,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Glass",
+        phase: Phase::Solid, // inert, melt product of sand
+        density: 9000,
+        color: [180, 210, 215],
+        color_jitter: 8,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.09,
+        high_temp: 1450.0,
+        high_to: LAVA, // remelts at extreme heat
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
 ];
+
+/// Blast radius for explosive materials; 0 = not explosive. A function rather
+/// than a table column so adding one explosive doesn't touch every row.
+#[inline]
+pub fn explosive_radius(id: MaterialId) -> u8 {
+    match id {
+        GUNPOWDER => 4,
+        _ => 0,
+    }
+}
 
 /// A data-driven contact reaction: when a cell of `a` is adjacent to a cell of
 /// `b`, with probability `prob` (and only if the `a` cell's temperature is at
@@ -344,6 +439,14 @@ pub static REACTIONS: &[Reaction] = &[
     Reaction { a: ACID, b: STONE, a_to: EMPTY, b_to: EMPTY, prob: 0.10, min_temp: NEVER_COLD },
     Reaction { a: ACID, b: COPPER, a_to: EMPTY, b_to: EMPTY, prob: 0.12, min_temp: NEVER_COLD },
     Reaction { a: ACID, b: BASALT, a_to: EMPTY, b_to: EMPTY, prob: 0.08, min_temp: NEVER_COLD },
+    Reaction { a: ACID, b: WOOD, a_to: EMPTY, b_to: EMPTY, prob: 0.15, min_temp: NEVER_COLD },
+    // Flammable gas: fire and sparks propagate through fume.
+    Reaction { a: FIRE, b: FUME, a_to: FIRE, b_to: FIRE, prob: 0.7, min_temp: NEVER_COLD },
+    Reaction { a: SPARK, b: FUME, a_to: CHARGED, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
+    // Flammable solid: fire creeps along wood.
+    Reaction { a: FIRE, b: WOOD, a_to: FIRE, b_to: FIRE, prob: 0.05, min_temp: NEVER_COLD },
+    // Cold source: cryo freezes adjacent water regardless of its own temperature.
+    Reaction { a: CRYO, b: WATER, a_to: CRYO, b_to: ICE, prob: 0.30, min_temp: NEVER_COLD },
 ];
 
 /// First reaction matching `(a, b)`, if any. Linear scan — the table is small.
