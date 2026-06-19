@@ -511,10 +511,20 @@ impl Grid {
                     sum += if x + 1 < w { temp[i + 1] } else { here };
                     sum += if y > 0 { temp[i - w] } else { here };
                     sum += if y + 1 < h { temp[i + w] } else { here };
-                    let rate = material::props(cells[i].material).conductivity;
+                    let mat = cells[i].material;
+                    let rate = material::props(mat).conductivity;
+                    let mut next = here + rate * (sum * 0.25 - here);
+                    // Empty air gently relaxes to ambient — it's a weak heat sink,
+                    // so stray hot/cold pockets in air dissipate instead of
+                    // lingering and freezing/cooking neighbours later.
+                    if mat == EMPTY {
+                        const AMBIENT: f32 = 20.0;
+                        const AIR_RELAX: f32 = 0.05;
+                        next += AIR_RELAX * (AMBIENT - next);
+                    }
                     // SAFETY: `i` lies in chunk (cx,cy); chunks are disjoint, so
                     // no other task writes this index concurrently.
-                    unsafe { *out.0.add(i) = here + rate * (sum * 0.25 - here) };
+                    unsafe { *out.0.add(i) = next };
                 }
             }
         };
@@ -549,9 +559,14 @@ impl Grid {
         if new_life > 0 {
             self.transients += 1;
         }
+        let was = self.cells[i].material;
         self.cells[i].material = to;
         self.cells[i].life = new_life;
         self.cells[i].gen = self.gen;
+        // Dissolving etc. to empty must not strand the old temperature in air.
+        if to == EMPTY && was != EMPTY {
+            self.temp[i] = material::props(EMPTY).default_temp;
+        }
         true
     }
 
@@ -590,6 +605,11 @@ impl Grid {
                                 life: new_life,
                                 tint: self.cells[i].tint,
                             };
+                            // A cell that vanishes must not leave its (possibly
+                            // extreme) temperature behind as an invisible pocket.
+                            if decay == EMPTY {
+                                self.temp[i] = material::props(EMPTY).default_temp;
+                            }
                             self.touch(x, y);
                         } else {
                             self.cells[i].life = life - 1;

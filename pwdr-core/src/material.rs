@@ -423,11 +423,11 @@ pub static MATERIALS: &[MaterialProps] = &[
     },
     MaterialProps {
         name: "Plasma",
-        phase: Phase::Energy, // a heat tool: dumps heat into neighbours, then vanishes
-        density: 0,
+        phase: Phase::Gas, // a hot "flame": rises, flickers, sheds heat, then vanishes
+        density: -120,
         color: [235, 120, 255],
         color_jitter: 30,
-        dispersion: 0,
+        dispersion: 3,
         life: 25,
         decay_to: EMPTY, // leaves no trace
         default_temp: 4000.0,
@@ -439,11 +439,11 @@ pub static MATERIALS: &[MaterialProps] = &[
     },
     MaterialProps {
         name: "Frost",
-        phase: Phase::Energy, // a cold tool: drains heat from neighbours, then vanishes
-        density: 0,
+        phase: Phase::Gas, // a cold "flame": rises, flickers, drains heat, then vanishes
+        density: -110,
         color: [190, 240, 255],
         color_jitter: 20,
-        dispersion: 0,
+        dispersion: 3,
         life: 25,
         decay_to: EMPTY, // leaves no trace
         default_temp: -1000.0,
