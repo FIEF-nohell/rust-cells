@@ -2096,10 +2096,12 @@ mod tests {
     }
 
     #[test]
-    fn copper_melts_when_very_hot() {
-        let (mut g, x, y) = boxed(COPPER, 1200.0);
-        g.step();
-        assert_eq!(g.material_at(x, y), LAVA, "molten copper -> lava");
+    fn conductor_is_heat_proof() {
+        let (mut g, x, y) = boxed(COPPER, 5000.0);
+        for _ in 0..50 {
+            g.step();
+        }
+        assert_eq!(g.material_at(x, y), COPPER, "conductor never melts from heat");
     }
 
     // --- electronics / explosives / materials / heat-source tests ---

@@ -262,7 +262,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         low_to: EMPTY,
     },
     MaterialProps {
-        name: "Copper",
+        name: "Conductor",
         phase: Phase::Solid,
         density: 9000,
         color: [200, 120, 70],
@@ -272,8 +272,8 @@ pub static MATERIALS: &[MaterialProps] = &[
         decay_to: EMPTY,
         default_temp: 20.0,
         conductivity: 0.50,
-        high_temp: 1085.0, // melts to molten metal (lava) — e.g. thermite/lava
-        high_to: LAVA,
+        high_temp: NEVER_HOT, // heat-proof: never melts/destroyed by temperature
+        high_to: EMPTY,
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
