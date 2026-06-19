@@ -2,6 +2,9 @@
 //! All simulation logic lives in `pwdr-core`; this file only draws it and feeds
 //! it user edits.
 
+// Release builds are a GUI app: no console window. Debug keeps the console for logs.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use macroquad::prelude::*;
 use pwdr_core::material::{self, MaterialId, Phase, EMPTY};
 use pwdr_core::Grid;
@@ -26,8 +29,9 @@ const TICK_DT: f64 = 1.0 / 60.0;
 fn window_conf() -> Conf {
     Conf {
         window_title: "rust-cells".to_owned(),
-        window_width: (256.0 * SCALE + PANEL_W) as i32,
-        window_height: (256.0 * SCALE) as i32,
+        // Default canvas: 400 wide x 250 tall cells (plus the side panel).
+        window_width: (400.0 * SCALE + PANEL_W) as i32,
+        window_height: (250.0 * SCALE) as i32,
         window_resizable: true,
         icon: Some(make_icon()),
         ..Default::default()
