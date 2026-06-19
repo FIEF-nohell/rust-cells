@@ -356,6 +356,7 @@ impl Grid {
                                     || m == material::SPARK
                                     || m == material::CHARGED
                                     || m == material::LAVA
+                                    || m == material::BURNFUSE
                             };
                             let ra = material::explosive_radius(a);
                             let rb = material::explosive_radius(b);
@@ -2129,11 +2130,28 @@ mod tests {
             g.set(x, 1, FUSE);
         }
         g.set(0, 1, FIRE);
-        let fuse0 = g.count(FUSE);
         for _ in 0..400 {
             g.step();
         }
-        assert!(g.count(FUSE) < fuse0 / 2, "fuse burned down: {}", g.count(FUSE));
+        assert_eq!(g.count(FUSE), 0, "fuse burned down fully and reliably");
+    }
+
+    #[test]
+    fn lit_lamp_chains_across_neighbours() {
+        let mut g = Grid::new(12, 12, 1);
+        for y in 3..9 {
+            for x in 3..9 {
+                g.set(x, y, LAMP);
+            }
+        }
+        let total = g.count(LAMP);
+        g.set(2, 5, CHARGED); // a single pulse next to the array
+        let mut max_lit = 0;
+        for _ in 0..30 {
+            g.step();
+            max_lit = max_lit.max(g.count(LITLAMP));
+        }
+        assert!(max_lit > total / 2, "lit lamp chained through the array: {max_lit}/{total}");
     }
 
     #[test]

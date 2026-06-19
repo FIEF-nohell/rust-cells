@@ -92,6 +92,7 @@ pub const COAL: MaterialId = 39;
 pub const OBSIDIAN: MaterialId = 40;
 pub const HEATER: MaterialId = 41;
 pub const COOLER: MaterialId = 42;
+pub const BURNFUSE: MaterialId = 43;
 
 const NEVER_HOT: f32 = f32::INFINITY;
 const NEVER_COLD: f32 = f32::NEG_INFINITY;
@@ -630,7 +631,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         default_temp: 20.0,
         conductivity: 0.05,
         high_temp: 200.0,
-        high_to: FIRE,
+        high_to: BURNFUSE, // heat lights it into a steady travelling burn
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
@@ -797,6 +798,22 @@ pub static MATERIALS: &[MaterialProps] = &[
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
+    MaterialProps {
+        name: "Burning Fuse",
+        phase: Phase::Energy, // travelling burn that stays on the cord
+        density: 0,
+        color: [255, 180, 50],
+        color_jitter: 30,
+        dispersion: 0,
+        life: 8,
+        decay_to: EMPTY,
+        default_temp: 500.0,
+        conductivity: 0.10,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
 ];
 
 /// Fixed temperature a persistent source holds, if any (Heater/Cooler).
@@ -812,7 +829,7 @@ pub fn pinned_temp(id: MaterialId) -> Option<f32> {
 /// Internal materials the user shouldn't paint (transient conduction states).
 #[inline]
 pub fn user_paintable(id: MaterialId) -> bool {
-    !matches!(id, EMPTY | CHARGED | COOLED | LITLAMP)
+    !matches!(id, EMPTY | CHARGED | COOLED | LITLAMP | BURNFUSE)
 }
 
 /// Blast radius for explosive materials; 0 = not explosive. A function rather
@@ -890,12 +907,16 @@ pub static REACTIONS: &[Reaction] = &[
     Reaction { a: FIRE, b: THERMITE, a_to: FIRE, b_to: LAVA, prob: 0.6, min_temp: NEVER_COLD },
     Reaction { a: SPARK, b: THERMITE, a_to: CHARGED, b_to: LAVA, prob: 1.0, min_temp: NEVER_COLD },
     Reaction { a: LAVA, b: THERMITE, a_to: LAVA, b_to: LAVA, prob: 0.5, min_temp: NEVER_COLD },
-    // Electronics: a live wire (charge/spark) lights an adjacent lamp.
+    // Electronics: a live wire (charge/spark) lights an adjacent lamp, and a lit
+    // lamp lights its neighbours — so a lamp array all glows together.
     Reaction { a: CHARGED, b: LAMP, a_to: CHARGED, b_to: LITLAMP, prob: 1.0, min_temp: NEVER_COLD },
     Reaction { a: SPARK, b: LAMP, a_to: SPARK, b_to: LITLAMP, prob: 1.0, min_temp: NEVER_COLD },
-    // Fuse: slow flame travel; a spark lights it.
-    Reaction { a: FIRE, b: FUSE, a_to: FIRE, b_to: FIRE, prob: 0.18, min_temp: NEVER_COLD },
-    Reaction { a: SPARK, b: FUSE, a_to: CHARGED, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction { a: LITLAMP, b: LAMP, a_to: LITLAMP, b_to: LITLAMP, prob: 1.0, min_temp: NEVER_COLD },
+    // Fuse: a steady self-propagating burn travels the cord reliably.
+    Reaction { a: FIRE, b: FUSE, a_to: FIRE, b_to: BURNFUSE, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction { a: BURNFUSE, b: FUSE, a_to: BURNFUSE, b_to: BURNFUSE, prob: 0.5, min_temp: NEVER_COLD },
+    Reaction { a: SPARK, b: FUSE, a_to: SPARK, b_to: BURNFUSE, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction { a: CHARGED, b: FUSE, a_to: CHARGED, b_to: BURNFUSE, prob: 1.0, min_temp: NEVER_COLD },
     // Hydrogen: ignites readily (and detonates via the blast hook).
     Reaction { a: FIRE, b: HYDROGEN, a_to: FIRE, b_to: FIRE, prob: 0.9, min_temp: NEVER_COLD },
     // Coal: smoulders — fire creeps slowly, so a coal bed burns for a long time.
