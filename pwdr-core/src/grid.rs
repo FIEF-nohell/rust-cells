@@ -278,6 +278,7 @@ impl Grid {
         }
         match material::phase(cell.material) {
             Phase::Powder => self.update_powder(x, y),
+            Phase::Liquid => self.update_liquid(x, y),
             // Other phases land in later milestones.
             _ => {}
         }
@@ -296,6 +297,71 @@ impl Grid {
             return;
         }
         let _ = self.try_move(x, y, x as isize + b, y as isize + 1, mat);
+    }
+
+    /// Liquid: down, else a down-diagonal, else flow horizontally toward the
+    /// nearest reachable descent (level-seeking). Flowing only into empty/lighter
+    /// cells and only *toward a place it can fall* guarantees settling — a liquid
+    /// on flat ground with no lower neighbour rests, so no infinite oscillation.
+    fn update_liquid(&mut self, x: usize, y: usize) {
+        let mat = self.material_at(x, y);
+        if self.try_move(x, y, x as isize, y as isize + 1, mat) {
+            return;
+        }
+        let left_first = self.rng.bool();
+        let (a, b) = if left_first { (-1, 1) } else { (1, -1) };
+        if self.try_move(x, y, x as isize + a, y as isize + 1, mat) {
+            return;
+        }
+        if self.try_move(x, y, x as isize + b, y as isize + 1, mat) {
+            return;
+        }
+
+        // Horizontal level-seeking. Scan each side through passable cells for the
+        // nearest column where the liquid could descend.
+        let d = material::props(mat).dispersion as isize;
+        let left = self.scan_descent(x, y, -1, d, mat);
+        let right = self.scan_descent(x, y, 1, d, mat);
+        let dir = match (left, right) {
+            (Some(l), Some(r)) => {
+                if l < r {
+                    -1
+                } else if r < l {
+                    1
+                } else if self.rng.bool() {
+                    -1
+                } else {
+                    1
+                }
+            }
+            (Some(_), None) => -1,
+            (None, Some(_)) => 1,
+            (None, None) => return, // nowhere lower to go: rest
+        };
+        let _ = self.try_move(x, y, x as isize + dir, y as isize, mat);
+    }
+
+    /// Scan `dir` (±1) up to `max` steps through cells this liquid can pass
+    /// (empty/lighter). Returns the step count of the nearest column where it can
+    /// also fall (cell below is displaceable), or `None` if none / path blocked.
+    fn scan_descent(&self, x: usize, y: usize, dir: isize, max: isize, mat: MaterialId) -> Option<isize> {
+        for step in 1..=max {
+            let nx = x as isize + dir * step;
+            if !self.in_bounds(nx, y as isize) {
+                return None;
+            }
+            let nx = nx as usize;
+            if !displaces(mat, self.material_at(nx, y)) {
+                return None; // path blocked
+            }
+            let below = y as isize + 1;
+            if self.in_bounds(nx as isize, below)
+                && displaces(mat, self.material_at(nx, below as usize))
+            {
+                return Some(step);
+            }
+        }
+        None
     }
 
     /// If `mat` at (x,y) can displace whatever is at (tx,ty), swap them, tag
@@ -381,7 +447,7 @@ pub fn displaces(mover: MaterialId, target: MaterialId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::material::{SAND, STONE};
+    use crate::material::{SAND, STONE, WATER};
 
     #[test]
     fn cell_is_small() {
@@ -517,6 +583,92 @@ mod tests {
                 "chunked result must match full scan"
             );
         }
+    }
+
+    // --- M3 liquid tests ---
+
+    /// Build a stone basin: tall side walls at `x=left,right`, floor row at the
+    /// bottom. Interior columns are `left+1 ..= right-1`.
+    fn basin(w: usize, h: usize, left: usize, right: usize, seed: u64) -> Grid {
+        let mut g = Grid::new(w, h, seed);
+        for y in 0..h {
+            g.set(left, y, STONE);
+            g.set(right, y, STONE);
+        }
+        for x in left..=right {
+            g.set(x, h - 1, STONE);
+        }
+        g
+    }
+
+    #[test]
+    fn basin_fills_level_and_settles() {
+        let (w, h, left, right) = (24, 24, 4, 19);
+        let mut g = basin(w, h, left, right, 5);
+        // Pour a 14-wide x 4-tall slab (= 4 full interior rows).
+        for y in 2..=5 {
+            for x in (left + 1)..=(right - 1) {
+                g.set(x, y, WATER);
+            }
+        }
+        let poured = g.count(WATER);
+        for _ in 0..4000 {
+            g.step();
+        }
+        assert_eq!(g.count(WATER), poured, "water conserved");
+        assert_eq!(g.awake_chunk_count(), 0, "must settle — no infinite oscillation");
+
+        // Bottom 4 interior rows fully filled and level.
+        let floor = h - 1;
+        for row in (floor - 4)..floor {
+            for x in (left + 1)..=(right - 1) {
+                assert_eq!(g.material_at(x, row), WATER, "level fill at ({x},{row})");
+            }
+        }
+        // The row above the pool is empty (no overfill).
+        for x in (left + 1)..=(right - 1) {
+            assert_eq!(g.material_at(x, floor - 5), EMPTY, "no water above level");
+        }
+    }
+
+    #[test]
+    fn water_spreads_horizontally() {
+        // A 1-wide column of water on a floor must spread sideways when it can't fall.
+        let mut g = Grid::new(21, 12, 7);
+        for x in 0..21 {
+            g.set(x, 11, STONE); // floor
+        }
+        for y in 4..11 {
+            g.set(10, y, WATER); // tall thin column
+        }
+        for _ in 0..600 {
+            g.step();
+        }
+        assert_eq!(g.awake_chunk_count(), 0, "settles");
+        let bottom = 10;
+        let span = (0..21).filter(|&x| g.material_at(x, bottom) == WATER).count();
+        assert!(span > 3, "water spread out along the floor, span={span}");
+    }
+
+    #[test]
+    fn denser_powder_sinks_through_liquid() {
+        let mut g = Grid::new(6, 16, 9);
+        // A still pool resting on the bottom boundary.
+        for y in 8..16 {
+            for x in 0..6 {
+                g.set(x, y, WATER);
+            }
+        }
+        let water0 = g.count(WATER);
+        g.set(3, 0, SAND);
+        for _ in 0..200 {
+            g.step();
+        }
+        assert_eq!(g.count(SAND), 1, "sand conserved");
+        assert_eq!(g.count(WATER), water0, "water conserved");
+        assert_eq!(g.material_at(3, 15), SAND, "sand sank to the bottom");
+        // A water cell got displaced up to the old top of the pool.
+        assert_eq!(g.material_at(3, 7), WATER, "water displaced upward");
     }
 
     #[test]

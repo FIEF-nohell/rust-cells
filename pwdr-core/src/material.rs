@@ -42,6 +42,7 @@ pub struct MaterialProps {
 pub const EMPTY: MaterialId = 0;
 pub const STONE: MaterialId = 1;
 pub const SAND: MaterialId = 2;
+pub const WATER: MaterialId = 3;
 
 /// The material table, indexed by [`MaterialId`]. Order MUST match the ids above.
 pub static MATERIALS: &[MaterialProps] = &[
@@ -68,6 +69,14 @@ pub static MATERIALS: &[MaterialProps] = &[
         color: [194, 178, 110],
         color_jitter: 18,
         dispersion: 0,
+    },
+    MaterialProps {
+        name: "Water",
+        phase: Phase::Liquid,
+        density: 1000,
+        color: [40, 90, 200],
+        color_jitter: 14,
+        dispersion: 5,
     },
 ];
 

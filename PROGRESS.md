@@ -9,7 +9,7 @@ Living log of decisions, roster, test status, perf numbers. One section per mile
 | M0 Workspace & harness | ✅ done | 7 green |
 | M1 Grid + first powder | ✅ done | 11 green |
 | M2 Chunks & dirty rects | ✅ done | 16 green |
-| M3 Liquids | ⏳ | |
+| M3 Liquids | ✅ done | 19 unit + proptest |
 | M4 Gases | ⏳ | |
 | M5 Temperature & transitions | ⏳ | |
 | M6 Reactions & energy | ⏳ | |
@@ -85,3 +85,25 @@ behavior intact.
 **Perf baselines (criterion, see README):** full_active 256² ≈ 0.40 ms, 512² ≈ 1.60 ms;
 sparse 512² ≈ 0.24 ms, 1024² ≈ 0.86 ms. All within the 16.67 ms/60 fps budget. Doctrine
 floors (256² full, 512² sparse @ 60 fps single-thread) met with large headroom.
+
+---
+
+## M3 — Liquids ✅
+
+**Decisions**
+- Liquid movement: down → down-diagonal → **horizontal level-seeking**. The
+  level-seek (`scan_descent`) scans each side, up to `dispersion`, *through passable
+  cells only* (empty/lighter — water cannot pass water) for the nearest column where
+  it can fall; it steps one cell toward the nearer descent.
+- **Guaranteed settling, no infinite oscillation:** a liquid only flows toward a place
+  it can descend. On flat ground with no lower neighbour it rests. Verified by asserting
+  `awake_chunk_count()==0` after settling in the basin and spread tests.
+- Density displacement is the same generalized `displaces()` rule from M1 — sand sinks
+  through water, water bubbles up, no per-pair code. Water density 1000 < sand 1600.
+- Roster +Water (Liquid, dispersion 5).
+
+**Tests (19 unit + proptest):** basin fills level + conserved + settles; thin column
+spreads along floor; denser powder sinks through liquid (both conserved); plus the new
+**proptest** suite (200 cases): no panic / no OOB, all ids valid, movement conserves mass.
+
+**App:** keys 1/2/3 select Sand/Water/Stone, `[`/`]` brush size, HUD shows selection.

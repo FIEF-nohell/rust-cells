@@ -2,7 +2,7 @@
 //! Holds as little logic as possible; all simulation lives in `pwdr-core`.
 
 use macroquad::prelude::*;
-use pwdr_core::material::{EMPTY, SAND};
+use pwdr_core::material::{self, EMPTY, SAND, STONE, WATER};
 use pwdr_core::Grid;
 
 const GRID_W: usize = 256;
@@ -31,10 +31,29 @@ async fn main() {
     texture.set_filter(FilterMode::Nearest);
 
     let mut acc = 0.0f64;
-    let brush = 3usize;
+    let mut brush = 3usize;
+    let mut selected = SAND;
 
     loop {
-        // Brush: left paints sand, right erases. Map screen -> grid coords.
+        // Material selection.
+        if is_key_pressed(KeyCode::Key1) {
+            selected = SAND;
+        }
+        if is_key_pressed(KeyCode::Key2) {
+            selected = WATER;
+        }
+        if is_key_pressed(KeyCode::Key3) {
+            selected = STONE;
+        }
+        // Brush size.
+        if is_key_pressed(KeyCode::LeftBracket) && brush > 0 {
+            brush -= 1;
+        }
+        if is_key_pressed(KeyCode::RightBracket) {
+            brush += 1;
+        }
+
+        // Brush: left paints selected, right erases. Map screen -> grid coords.
         if is_mouse_button_down(MouseButton::Left) || is_mouse_button_down(MouseButton::Right) {
             let (mx, my) = mouse_position();
             let gx = (mx / screen_width() * GRID_W as f32) as i32;
@@ -43,7 +62,7 @@ async fn main() {
                 let mat = if is_mouse_button_down(MouseButton::Right) {
                     EMPTY
                 } else {
-                    SAND
+                    selected
                 };
                 grid.paint(gx as usize, gy as usize, brush, mat);
             }
@@ -74,7 +93,14 @@ async fn main() {
         );
 
         draw_text(
-            &format!("pwdr  {}x{}  {:.0} fps", GRID_W, GRID_H, get_fps()),
+            &format!(
+                "pwdr  {}x{}  {:.0} fps  [{}] brush {}",
+                GRID_W,
+                GRID_H,
+                get_fps(),
+                material::props(selected).name,
+                brush
+            ),
             8.0,
             20.0,
             24.0,
