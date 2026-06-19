@@ -39,5 +39,5 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: pwdr-windows
-          path: target/release/pwdr-app.exe
+          name: rust-cells-windows
+          path: target/release/rust-cells.exe

@@ -1,6 +1,6 @@
 //! Generate a hand-designed "showcase" diorama featuring (nearly) every element
 //! in a natural context — a volcano, an ocean, a snowy mountain, a wired house,
-//! a sky, and an underground. Written to the Desktop as `pwdr-showcase.save`.
+//! a sky, and an underground. Written to the Desktop as `rust-cells-showcase.save`.
 //! Load it in the app with F8 — it opens PAUSED, so it reads as a picture; hit
 //! Space to bring it to life (lava flows into the sea, the circuit lights the
 //! lamp, fuses can be lit, the waterfall runs, ...).
@@ -42,7 +42,7 @@ fn main() {
         .unwrap_or_else(|_| ".".to_string());
     let path = std::path::Path::new(&home)
         .join("Desktop")
-        .join("pwdr-showcase.save");
+        .join("rust-cells-showcase.save");
     std::fs::write(&path, blob).expect("write showcase save");
     println!("wrote {} ({W}x{H})", path.display());
 }

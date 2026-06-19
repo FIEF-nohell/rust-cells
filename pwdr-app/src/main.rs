@@ -25,7 +25,7 @@ const TICK_DT: f64 = 1.0 / 60.0;
 
 fn window_conf() -> Conf {
     Conf {
-        window_title: "pwdr".to_owned(),
+        window_title: "rust-cells".to_owned(),
         window_width: (256.0 * SCALE + PANEL_W) as i32,
         window_height: (256.0 * SCALE) as i32,
         window_resizable: true,
@@ -138,7 +138,7 @@ async fn main() {
     let mut view_x = 0.0f32; // top-left of the view, in grid cells
     let mut view_y = 0.0f32;
     let mut prev_mouse = (0.0f32, 0.0f32);
-    let showcase_path = desktop_path("pwdr-showcase.save");
+    let showcase_path = desktop_path("rust-cells-showcase.save");
     let desktop_dir = showcase_path
         .parent()
         .map(|p| p.to_path_buf())
@@ -293,7 +293,7 @@ async fn main() {
         // F5 = save-as dialog. Native file picker; default to the Desktop.
         if is_key_pressed(KeyCode::F5) {
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("pwdr map", &["save"])
+                .add_filter("rust-cells map", &["save"])
                 .set_directory(&desktop_dir)
                 .set_file_name("map.save")
                 .save_file()
@@ -307,7 +307,7 @@ async fn main() {
         // F9 = open dialog (pick any map), F8 = load the bundled showcase.
         let load_req = if is_key_pressed(KeyCode::F9) {
             rfd::FileDialog::new()
-                .add_filter("pwdr map", &["save"])
+                .add_filter("rust-cells map", &["save"])
                 .set_directory(&desktop_dir)
                 .pick_file()
         } else if is_key_pressed(KeyCode::F8) {
@@ -652,7 +652,7 @@ fn draw_hud(
     line(
         0.0,
         &format!(
-            "pwdr  {}x{}  {:.0} fps{}",
+            "rust-cells  {}x{}  {:.0} fps{}",
             gw,
             gh,
             fps,

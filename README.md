@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="assets/icon.svg" width="120" alt="pwdr icon"/>
+<img src="assets/icon.svg" width="120" alt="rust-cells icon"/>
 
-# pwdr
+# rust-cells
 
 **A fast, deterministic falling-sand / powder simulation in Rust.**
 
@@ -137,7 +137,7 @@ assets/            icon
 Regenerate the showcase map any time:
 
 ```sh
-cargo run -p pwdr-core --example showcase   # writes pwdr-showcase.save to your Desktop
+cargo run -p pwdr-core --example showcase   # writes rust-cells-showcase.save to your Desktop
 ```
 
 ## License

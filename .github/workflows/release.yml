@@ -23,5 +23,5 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: target/release/pwdr-app.exe
+          files: target/release/rust-cells.exe
           generate_release_notes: true
