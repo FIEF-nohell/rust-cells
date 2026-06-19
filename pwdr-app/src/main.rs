@@ -131,14 +131,12 @@ async fn main() {
         if is_key_pressed(KeyCode::Right) {
             do_single_step = true;
         }
-        // Brush size: Shift + mouse wheel.
+        // Brush size: mouse wheel.
         let (_, wheel) = mouse_wheel();
-        if wheel != 0.0 && (is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift)) {
-            if wheel > 0.0 {
-                brush = (brush + 1).min(MAX_BRUSH);
-            } else {
-                brush = brush.saturating_sub(1);
-            }
+        if wheel > 0.0 {
+            brush = (brush + 1).min(MAX_BRUSH);
+        } else if wheel < 0.0 {
+            brush = brush.saturating_sub(1);
         }
         if is_key_pressed(KeyCode::Delete) {
             grid = Grid::new(gw, gh, SEED);
@@ -367,7 +365,7 @@ fn draw_hud(
     }
 
     draw_text(
-        "L paint  R erase  Space pause  -> step  Shift+wheel brush  F2 heat  F5 save  F9 load  Del clear",
+        "L paint  R erase  Space pause  -> step  wheel brush  F2 heat  F5 save  F9 load  Del clear",
         8.0,
         sim_h - 24.0,
         16.0,

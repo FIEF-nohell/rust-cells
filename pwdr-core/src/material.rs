@@ -603,6 +603,7 @@ pub static REACTIONS: &[Reaction] = &[
     Reaction { a: SPARK, b: OIL, a_to: SPARK, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
     Reaction { a: CHARGED, b: OIL, a_to: CHARGED, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
     // Corrosion: acid dissolves materials and is consumed in the process.
+    Reaction { a: ACID, b: WATER, a_to: EMPTY, b_to: EMPTY, prob: 0.15, min_temp: NEVER_COLD },
     Reaction { a: ACID, b: SAND, a_to: EMPTY, b_to: EMPTY, prob: 0.20, min_temp: NEVER_COLD },
     Reaction { a: ACID, b: STONE, a_to: EMPTY, b_to: EMPTY, prob: 0.10, min_temp: NEVER_COLD },
     Reaction { a: ACID, b: COPPER, a_to: EMPTY, b_to: EMPTY, prob: 0.12, min_temp: NEVER_COLD },
