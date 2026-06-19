@@ -10,8 +10,15 @@ use std::time::Instant;
 const SCALE: f32 = 3.0; // screen pixels per cell
 const PANEL_W: f32 = 240.0;
 const SEED: u64 = 0xC0FFEE;
-const SAVE_PATH: &str = "pwdr.save";
 const MAX_BRUSH: usize = 64;
+
+/// A path on the user's Desktop (so saves are easy to find).
+fn desktop_path(name: &str) -> std::path::PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    std::path::Path::new(&home).join("Desktop").join(name)
+}
 
 /// Fixed simulation timestep (60 Hz), decoupled from render framerate.
 const TICK_DT: f64 = 1.0 / 60.0;
@@ -72,14 +79,22 @@ async fn main() {
     let mut status = String::new();
     let mut pending_resize = false;
     let mut heat_overlay = false;
+    // Frames to ignore resize detection after we programmatically resize (load).
+    let mut resize_grace = 0i32;
+    let save_path = desktop_path("pwdr.save");
+    let showcase_path = desktop_path("pwdr-showcase.save");
 
     loop {
         let sim_px_w = gw as f32 * SCALE;
         let sim_px_h = gh as f32 * SCALE;
         let panel_x = screen_width() - PANEL_W;
 
-        // --- window resize: prompt before wiping ---
-        if (screen_width() - win_w).abs() > 0.5 || (screen_height() - win_h).abs() > 0.5 {
+        // --- window resize: prompt before wiping (skip during load grace) ---
+        if resize_grace > 0 {
+            resize_grace -= 1;
+            win_w = screen_width();
+            win_h = screen_height();
+        } else if (screen_width() - win_w).abs() > 0.5 || (screen_height() - win_h).abs() > 0.5 {
             pending_resize = true;
         }
         if pending_resize {
@@ -143,13 +158,22 @@ async fn main() {
             status = "cleared".into();
         }
         if is_key_pressed(KeyCode::F5) {
-            match std::fs::write(SAVE_PATH, grid.serialize()) {
-                Ok(_) => status = format!("saved {SAVE_PATH}"),
+            match std::fs::write(&save_path, grid.serialize()) {
+                Ok(_) => status = format!("saved {}", save_path.display()),
                 Err(e) => status = format!("save failed: {e}"),
             }
         }
-        if is_key_pressed(KeyCode::F9) {
-            match std::fs::read(SAVE_PATH).ok().and_then(|b| Grid::deserialize(&b)) {
+        // F9 = load quicksave, F8 = load the element showcase. Both restore the
+        // saved grid at its original size and resize the window to fit.
+        let load_req = if is_key_pressed(KeyCode::F9) {
+            Some(save_path.clone())
+        } else if is_key_pressed(KeyCode::F8) {
+            Some(showcase_path.clone())
+        } else {
+            None
+        };
+        if let Some(path) = load_req {
+            match std::fs::read(&path).ok().and_then(|b| Grid::deserialize(&b)) {
                 Some(g) => {
                     gw = g.width();
                     gh = g.height();
@@ -157,9 +181,16 @@ async fn main() {
                     let (ni, nt) = make_texture(gw, gh);
                     image = ni;
                     texture = nt;
-                    status = format!("loaded {SAVE_PATH} ({gw}x{gh})");
+                    // Resize the window to the loaded map and skip the wipe prompt
+                    // while it settles.
+                    let (tw, th) = (gw as f32 * SCALE + PANEL_W, gh as f32 * SCALE);
+                    request_new_screen_size(tw, th);
+                    win_w = tw;
+                    win_h = th;
+                    resize_grace = 20;
+                    status = format!("loaded {} ({gw}x{gh})", path.display());
                 }
-                None => status = "load failed".into(),
+                None => status = format!("load failed: {}", path.display()),
             }
         }
 
@@ -365,7 +396,7 @@ fn draw_hud(
     }
 
     draw_text(
-        "L paint  R erase  Space pause  -> step  wheel brush  F2 heat  F5 save  F9 load  Del clear",
+        "L paint  R erase  Space pause  -> step  wheel brush  F2 heat  F5 save  F9 load  F8 showcase  Del clear",
         8.0,
         sim_h - 24.0,
         16.0,
