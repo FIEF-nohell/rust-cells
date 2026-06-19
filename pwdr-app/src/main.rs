@@ -159,31 +159,64 @@ async fn main() {
 
         let (mx, my) = mouse_position();
         let in_panel = mx >= panel_x;
-        let psc = SCALE * zoom; // pixels per cell, including zoom
 
-        // Mouse wheel: over panel -> scroll list; Ctrl -> zoom toward cursor;
-        // otherwise -> brush size.
+        let ctrl = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
+
+        // Zoom toward a screen point, keeping that point fixed.
+        let apply_zoom = |zoom: &mut f32, vx: &mut f32, vy: &mut f32, sx: f32, sy: f32, f: f32| {
+            let p = SCALE * *zoom;
+            let (gx, gy) = (*vx + sx / p, *vy + sy / p);
+            *zoom = (*zoom * f).clamp(1.0, 16.0);
+            let p2 = SCALE * *zoom;
+            *vx = gx - sx / p2;
+            *vy = gy - sy / p2;
+        };
+
+        // Mouse wheel: over panel -> scroll; Ctrl -> zoom; otherwise brush size.
         let (_, wheel) = mouse_wheel();
         if wheel != 0.0 {
             if in_panel {
                 palette_scroll = (palette_scroll - wheel * 24.0).max(0.0);
-            } else if is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl) {
-                let gx = view_x + mx / psc;
-                let gy = view_y + my / psc;
-                zoom = (zoom * if wheel > 0.0 { 1.2 } else { 1.0 / 1.2 }).clamp(1.0, 12.0);
-                let p2 = SCALE * zoom;
-                view_x = gx - mx / p2;
-                view_y = gy - my / p2;
+            } else if ctrl {
+                apply_zoom(&mut zoom, &mut view_x, &mut view_y, mx, my, if wheel > 0.0 { 1.2 } else { 1.0 / 1.2 });
             } else if wheel > 0.0 {
                 brush = (brush + 1).min(MAX_BRUSH);
             } else {
                 brush = brush.saturating_sub(1);
             }
         }
+        // Reliable keyboard zoom (no modifier): +/- and 0 to reset.
+        let (cx, cy) = (panel_x * 0.5, screen_height() * 0.5);
+        if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
+            apply_zoom(&mut zoom, &mut view_x, &mut view_y, cx, cy, 1.25);
+        }
+        if is_key_pressed(KeyCode::Minus) || is_key_pressed(KeyCode::KpSubtract) {
+            apply_zoom(&mut zoom, &mut view_x, &mut view_y, cx, cy, 1.0 / 1.25);
+        }
         if is_key_pressed(KeyCode::Key0) {
             zoom = 1.0;
             view_x = 0.0;
             view_y = 0.0;
+        }
+
+        let psc = SCALE * zoom; // recompute after any zoom change
+        let vis_w = panel_x / psc;
+        let vis_h = screen_height() / psc;
+
+        // Minimap (overview) in the top-right of the canvas; click/drag to navigate.
+        let mm_box = 150.0;
+        let (mm_w, mm_h) = if gw >= gh {
+            (mm_box, mm_box * gh as f32 / gw as f32)
+        } else {
+            (mm_box * gw as f32 / gh as f32, mm_box)
+        };
+        let (mm_x, mm_y) = (panel_x - mm_w - 8.0, 8.0);
+        let over_mm = mx >= mm_x && mx < mm_x + mm_w && my >= mm_y && my < mm_y + mm_h;
+        if over_mm && is_mouse_button_down(MouseButton::Left) {
+            let fx = (mx - mm_x) / mm_w;
+            let fy = (my - mm_y) / mm_h;
+            view_x = fx * gw as f32 - vis_w * 0.5;
+            view_y = fy * gh as f32 - vis_h * 0.5;
         }
         // Middle-drag pans the zoomed view.
         if is_mouse_button_down(MouseButton::Middle) {
@@ -192,8 +225,6 @@ async fn main() {
         }
         prev_mouse = (mx, my);
         // Clamp the view to the grid.
-        let vis_w = panel_x / psc;
-        let vis_h = screen_height() / psc;
         view_x = view_x.clamp(0.0, (gw as f32 - vis_w).max(0.0));
         view_y = view_y.clamp(0.0, (gh as f32 - vis_h).max(0.0));
         if is_key_pressed(KeyCode::Delete) {
@@ -266,8 +297,8 @@ async fn main() {
             }
         }
         let painting = !in_panel
-            && is_mouse_button_down(MouseButton::Left)
-            || (!in_panel && is_mouse_button_down(MouseButton::Right));
+            && !over_mm
+            && (is_mouse_button_down(MouseButton::Left) || is_mouse_button_down(MouseButton::Right));
         if painting {
             let gx = (view_x + mx / psc).floor();
             let gy = (view_y + my / psc).floor();
@@ -332,9 +363,30 @@ async fn main() {
             },
         );
 
-        if !in_panel {
+        if !in_panel && !over_mm {
             let r = brush as f32 * psc + psc * 0.5;
             draw_circle_lines(mx, my, r, 1.0, Color::from_rgba(255, 255, 255, 120));
+        }
+
+        // Minimap overview + viewport box (only useful when zoomed in).
+        if zoom > 1.01 {
+            draw_rectangle(mm_x - 2.0, mm_y - 2.0, mm_w + 4.0, mm_h + 4.0, Color::from_rgba(0, 0, 0, 200));
+            draw_texture_ex(
+                &texture,
+                mm_x,
+                mm_y,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(vec2(mm_w, mm_h)),
+                    ..Default::default()
+                },
+            );
+            let vx = mm_x + (view_x / gw as f32) * mm_w;
+            let vy = mm_y + (view_y / gh as f32) * mm_h;
+            let vw = (vis_w / gw as f32) * mm_w;
+            let vh = (vis_h / gh as f32) * mm_h;
+            draw_rectangle_lines(vx, vy, vw, vh, 2.0, Color::from_rgba(255, 255, 120, 230));
+            draw_rectangle_lines(mm_x, mm_y, mm_w, mm_h, 1.0, Color::from_rgba(120, 120, 140, 200));
         }
 
         draw_palette(&palette, selected, &search, panel_x, palette_scroll);
