@@ -81,6 +81,11 @@ async fn main() {
     let mut heat_overlay = false;
     // Frames to ignore resize detection after we programmatically resize (load).
     let mut resize_grace = 0i32;
+    let mut palette_scroll = 0.0f32;
+    let mut zoom = 1.0f32;
+    let mut view_x = 0.0f32; // top-left of the view, in grid cells
+    let mut view_y = 0.0f32;
+    let mut prev_mouse = (0.0f32, 0.0f32);
     let showcase_path = desktop_path("pwdr-showcase.save");
     let desktop_dir = showcase_path
         .parent()
@@ -88,16 +93,18 @@ async fn main() {
         .unwrap_or_else(|| ".".into());
 
     loop {
-        let sim_px_w = gw as f32 * SCALE;
-        let sim_px_h = gh as f32 * SCALE;
         let panel_x = screen_width() - PANEL_W;
 
         // --- window resize: prompt before wiping (skip during load grace) ---
-        if resize_grace > 0 {
+        // Ignore minimize / bogus tiny sizes so restoring doesn't trigger a wipe.
+        let minimized = screen_width() < 120.0 || screen_height() < 120.0;
+        if minimized {
+            // don't touch win_w/win_h; restoring returns to the tracked size
+        } else if resize_grace > 0 {
             resize_grace -= 1;
             win_w = screen_width();
             win_h = screen_height();
-        } else if (screen_width() - win_w).abs() > 0.5 || (screen_height() - win_h).abs() > 0.5 {
+        } else if (screen_width() - win_w).abs() > 1.5 || (screen_height() - win_h).abs() > 1.5 {
             pending_resize = true;
         }
         if pending_resize {
@@ -149,13 +156,46 @@ async fn main() {
         if is_key_pressed(KeyCode::Right) {
             do_single_step = true;
         }
-        // Brush size: mouse wheel.
+
+        let (mx, my) = mouse_position();
+        let in_panel = mx >= panel_x;
+        let psc = SCALE * zoom; // pixels per cell, including zoom
+
+        // Mouse wheel: over panel -> scroll list; Ctrl -> zoom toward cursor;
+        // otherwise -> brush size.
         let (_, wheel) = mouse_wheel();
-        if wheel > 0.0 {
-            brush = (brush + 1).min(MAX_BRUSH);
-        } else if wheel < 0.0 {
-            brush = brush.saturating_sub(1);
+        if wheel != 0.0 {
+            if in_panel {
+                palette_scroll = (palette_scroll - wheel * 24.0).max(0.0);
+            } else if is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl) {
+                let gx = view_x + mx / psc;
+                let gy = view_y + my / psc;
+                zoom = (zoom * if wheel > 0.0 { 1.2 } else { 1.0 / 1.2 }).clamp(1.0, 12.0);
+                let p2 = SCALE * zoom;
+                view_x = gx - mx / p2;
+                view_y = gy - my / p2;
+            } else if wheel > 0.0 {
+                brush = (brush + 1).min(MAX_BRUSH);
+            } else {
+                brush = brush.saturating_sub(1);
+            }
         }
+        if is_key_pressed(KeyCode::Key0) {
+            zoom = 1.0;
+            view_x = 0.0;
+            view_y = 0.0;
+        }
+        // Middle-drag pans the zoomed view.
+        if is_mouse_button_down(MouseButton::Middle) {
+            view_x -= (mx - prev_mouse.0) / psc;
+            view_y -= (my - prev_mouse.1) / psc;
+        }
+        prev_mouse = (mx, my);
+        // Clamp the view to the grid.
+        let vis_w = panel_x / psc;
+        let vis_h = screen_height() / psc;
+        view_x = view_x.clamp(0.0, (gw as f32 - vis_w).max(0.0));
+        view_y = view_y.clamp(0.0, (gh as f32 - vis_h).max(0.0));
         if is_key_pressed(KeyCode::Delete) {
             grid = Grid::new(gw, gh, SEED);
             status = "cleared".into();
@@ -210,35 +250,35 @@ async fn main() {
         }
 
         // --- palette layout (shared by draw + click) ---
-        let palette = build_palette(&search, panel_x);
+        let (palette, content_h) = build_palette(&search, panel_x);
+        let max_scroll = (content_h - (screen_height() - 8.0)).max(0.0);
+        palette_scroll = palette_scroll.min(max_scroll);
 
         // --- mouse: palette click vs. brush paint ---
-        let (mx, my) = mouse_position();
-        let in_panel = mx >= panel_x;
         if is_mouse_button_pressed(MouseButton::Left) && in_panel {
             for entry in &palette {
                 if let PaletteItem::Mat(id, rect) = entry {
-                    if rect.contains(vec2(mx, my)) {
+                    // rects are in base (unscrolled) coords; shift the test point.
+                    if rect.contains(vec2(mx, my + palette_scroll)) {
                         selected = *id;
                     }
                 }
             }
         }
         let painting = !in_panel
-            && mx < sim_px_w
-            && my < sim_px_h
-            && (is_mouse_button_down(MouseButton::Left) || is_mouse_button_down(MouseButton::Right));
+            && is_mouse_button_down(MouseButton::Left)
+            || (!in_panel && is_mouse_button_down(MouseButton::Right));
         if painting {
-            let gx = (mx / SCALE) as usize;
-            let gy = (my / SCALE) as usize;
-            if gx < gw && gy < gh {
+            let gx = (view_x + mx / psc).floor();
+            let gy = (view_y + my / psc).floor();
+            if gx >= 0.0 && gy >= 0.0 && (gx as usize) < gw && (gy as usize) < gh {
                 // Left paints (only into empty cells); right erases anything.
                 let mat = if is_mouse_button_down(MouseButton::Right) {
                     EMPTY
                 } else {
                     selected
                 };
-                grid.paint(gx, gy, brush, mat);
+                grid.paint(gx as usize, gy as usize, brush, mat);
             }
         }
 
@@ -279,26 +319,28 @@ async fn main() {
         texture.update(&image);
 
         clear_background(Color::from_rgba(18, 18, 22, 255));
+        // Zoomed view: scale the whole grid texture and offset to the view origin.
+        // The panel (drawn after) hides any overflow on the right.
         draw_texture_ex(
             &texture,
-            0.0,
-            0.0,
+            -view_x * psc,
+            -view_y * psc,
             WHITE,
             DrawTextureParams {
-                dest_size: Some(vec2(sim_px_w, sim_px_h)),
+                dest_size: Some(vec2(gw as f32 * psc, gh as f32 * psc)),
                 ..Default::default()
             },
         );
 
-        if !in_panel && mx < sim_px_w && my < sim_px_h {
-            let r = brush as f32 * SCALE + SCALE * 0.5;
+        if !in_panel {
+            let r = brush as f32 * psc + psc * 0.5;
             draw_circle_lines(mx, my, r, 1.0, Color::from_rgba(255, 255, 255, 120));
         }
 
-        draw_palette(&palette, selected, &search, panel_x);
+        draw_palette(&palette, selected, &search, panel_x, palette_scroll);
         draw_hud(
-            &grid, gw, gh, selected, brush, paused, heat_overlay, smooth_fps, smooth_tick_ms,
-            &status, mx, my, sim_px_w, sim_px_h,
+            &grid, gw, gh, selected, brush, paused, heat_overlay, zoom, smooth_fps, smooth_tick_ms,
+            &status, mx, my, view_x, view_y, psc, panel_x, screen_height(),
         );
 
         next_frame().await;
@@ -310,7 +352,9 @@ enum PaletteItem {
     Mat(MaterialId, Rect),
 }
 
-fn build_palette(search: &str, x0: f32) -> Vec<PaletteItem> {
+/// Layout the palette in base (unscrolled) coordinates. Returns the items and
+/// the total content height (for clamping the scroll offset).
+fn build_palette(search: &str, x0: f32) -> (Vec<PaletteItem>, f32) {
     let mut items = Vec::new();
     let pad = 8.0;
     let row_h = 22.0;
@@ -336,36 +380,45 @@ fn build_palette(search: &str, x0: f32) -> Vec<PaletteItem> {
         }
         y += 4.0;
     }
-    items
+    (items, y)
 }
 
-fn draw_palette(palette: &[PaletteItem], selected: MaterialId, search: &str, x0: f32) {
+fn draw_palette(palette: &[PaletteItem], selected: MaterialId, search: &str, x0: f32, scroll: f32) {
+    const LIST_TOP: f32 = 54.0; // below the search box; items above this are clipped
     draw_rectangle(x0, 0.0, PANEL_W, screen_height(), Color::from_rgba(28, 28, 34, 255));
-    draw_line(x0, 0.0, x0, screen_height(), 1.0, Color::from_rgba(60, 60, 70, 255));
-
-    draw_text("search (type to filter):", x0 + 8.0, 22.0, 18.0, GRAY);
-    draw_rectangle(x0 + 8.0, 28.0, PANEL_W - 16.0, 22.0, Color::from_rgba(12, 12, 16, 255));
-    let shown = if search.is_empty() { "_" } else { search };
-    draw_text(shown, x0 + 12.0, 44.0, 18.0, WHITE);
 
     for item in palette {
         match item {
             PaletteItem::Header(label, y) => {
-                draw_text(label, x0 + 8.0, y + 15.0, 16.0, Color::from_rgba(150, 150, 165, 255));
+                let dy = y - scroll;
+                if dy + 15.0 >= LIST_TOP && dy < screen_height() {
+                    draw_text(label, x0 + 8.0, dy + 15.0, 16.0, Color::from_rgba(150, 150, 165, 255));
+                }
             }
             PaletteItem::Mat(id, rect) => {
-                if *id == selected {
-                    draw_rectangle(rect.x - 2.0, rect.y - 1.0, rect.w + 4.0, rect.h + 2.0, Color::from_rgba(80, 80, 100, 255));
+                let dy = rect.y - scroll;
+                if dy + rect.h < LIST_TOP || dy > screen_height() {
+                    continue;
                 }
-                draw_rectangle(rect.x, rect.y, 16.0, rect.h, swatch(*id));
-                draw_rectangle_lines(rect.x, rect.y, 16.0, rect.h, 1.0, Color::from_rgba(0, 0, 0, 180));
-                draw_text(material::props(*id).name, rect.x + 22.0, rect.y + 14.0, 18.0, WHITE);
+                if *id == selected {
+                    draw_rectangle(rect.x - 2.0, dy - 1.0, rect.w + 4.0, rect.h + 2.0, Color::from_rgba(80, 80, 100, 255));
+                }
+                draw_rectangle(rect.x, dy, 16.0, rect.h, swatch(*id));
+                draw_rectangle_lines(rect.x, dy, 16.0, rect.h, 1.0, Color::from_rgba(0, 0, 0, 180));
+                draw_text(material::props(*id).name, rect.x + 22.0, dy + 14.0, 18.0, WHITE);
             }
         }
     }
+
+    // Search box drawn last so it covers any item scrolled up under it.
+    draw_rectangle(x0, 0.0, PANEL_W, LIST_TOP, Color::from_rgba(28, 28, 34, 255));
+    draw_line(x0, 0.0, x0, screen_height(), 1.0, Color::from_rgba(60, 60, 70, 255));
+    draw_text("search (type to filter):", x0 + 8.0, 22.0, 18.0, GRAY);
+    draw_rectangle(x0 + 8.0, 28.0, PANEL_W - 16.0, 22.0, Color::from_rgba(12, 12, 16, 255));
+    let shown = if search.is_empty() { "_" } else { search };
+    draw_text(shown, x0 + 12.0, 44.0, 18.0, WHITE);
 }
 
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn draw_hud(
     grid: &Grid,
@@ -375,18 +428,25 @@ fn draw_hud(
     brush: usize,
     paused: bool,
     heat_overlay: bool,
+    zoom: f32,
     fps: f32,
     tick_ms: f32,
     status: &str,
     mx: f32,
     my: f32,
+    view_x: f32,
+    view_y: f32,
+    psc: f32,
     sim_w: f32,
     sim_h: f32,
 ) {
     let line = |i: f32, s: &str| draw_text(s, 8.0, 18.0 + i * 18.0, 18.0, WHITE);
 
-    draw_rectangle(0.0, 0.0, 360.0, 96.0, Color::from_rgba(0, 0, 0, 110));
-    line(0.0, &format!("pwdr  {}x{}  {:.0} fps", gw, gh, fps));
+    draw_rectangle(0.0, 0.0, 380.0, 96.0, Color::from_rgba(0, 0, 0, 110));
+    line(
+        0.0,
+        &format!("pwdr  {}x{}  {:.0} fps{}", gw, gh, fps, if zoom > 1.01 { format!("  {zoom:.1}x") } else { String::new() }),
+    );
     line(
         1.0,
         &format!(
@@ -399,9 +459,10 @@ fn draw_hud(
     line(2.0, &format!("brush {}  sel: {}", brush, material::props(selected).name));
 
     if mx >= 0.0 && mx < sim_w && my >= 0.0 && my < sim_h {
-        let gx = (mx / SCALE) as usize;
-        let gy = (my / SCALE) as usize;
-        if gx < grid.width() && gy < grid.height() {
+        let gx = (view_x + mx / psc).floor() as i32;
+        let gy = (view_y + my / psc).floor() as i32;
+        if gx >= 0 && gy >= 0 && (gx as usize) < grid.width() && (gy as usize) < grid.height() {
+            let (gx, gy) = (gx as usize, gy as usize);
             let m = grid.material_at(gx, gy);
             line(
                 3.0,
@@ -411,7 +472,7 @@ fn draw_hud(
     }
 
     draw_text(
-        "L paint  R erase  Space pause  -> step  wheel brush  F2 heat  F5 save  F9 load  F8 showcase  Del clear",
+        "L paint  R erase  Space pause  -> step  wheel=brush  Ctrl+wheel=zoom  0 reset  mid-drag pan  F2 heat  F5/F9 save/load  F8 showcase",
         8.0,
         sim_h - 24.0,
         16.0,
