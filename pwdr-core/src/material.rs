@@ -78,6 +78,20 @@ pub const SALT: MaterialId = 25;
 pub const PLANT: MaterialId = 26;
 pub const THERMITE: MaterialId = 27;
 pub const SALTWATER: MaterialId = 28;
+pub const BATTERY: MaterialId = 29;
+pub const LAMP: MaterialId = 30;
+pub const LITLAMP: MaterialId = 31;
+pub const FUSE: MaterialId = 32;
+pub const HYDROGEN: MaterialId = 33;
+pub const NITRO: MaterialId = 34;
+pub const TNT: MaterialId = 35;
+pub const MERCURY: MaterialId = 36;
+pub const WAX: MaterialId = 37;
+pub const MELTWAX: MaterialId = 38;
+pub const COAL: MaterialId = 39;
+pub const OBSIDIAN: MaterialId = 40;
+pub const HEATER: MaterialId = 41;
+pub const COOLER: MaterialId = 42;
 
 const NEVER_HOT: f32 = f32::INFINITY;
 const NEVER_COLD: f32 = f32::NEG_INFINITY;
@@ -555,12 +569,250 @@ pub static MATERIALS: &[MaterialProps] = &[
         low_temp: NEVER_COLD, // freezing-point depression: stays liquid
         low_to: EMPTY,
     },
+    // --- Electronics ---
+    MaterialProps {
+        name: "Battery",
+        phase: Phase::Solid, // pulses charge into adjacent copper
+        density: 9000,
+        color: [70, 200, 90],
+        color_jitter: 8,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.10,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Lamp",
+        phase: Phase::Solid, // lights when charge passes nearby
+        density: 9000,
+        color: [90, 85, 45],
+        color_jitter: 6,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.20,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "LitLamp",
+        phase: Phase::Solid, // glowing lamp; fades back to Lamp
+        density: 9000,
+        color: [255, 240, 130],
+        color_jitter: 4,
+        dispersion: 0,
+        life: 8,
+        decay_to: LAMP,
+        default_temp: 20.0,
+        conductivity: 0.20,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Fuse",
+        phase: Phase::Solid, // slow-burning cord
+        density: 9000,
+        color: [120, 95, 60],
+        color_jitter: 12,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.05,
+        high_temp: 200.0,
+        high_to: FIRE,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    // --- Explosives ---
+    MaterialProps {
+        name: "Hydrogen",
+        phase: Phase::Gas, // very light, flash-explodes when ignited
+        density: -90,
+        color: [180, 220, 235],
+        color_jitter: 14,
+        dispersion: 6,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.04,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Nitro",
+        phase: Phase::Liquid, // liquid high explosive, big blast
+        density: 1200,
+        color: [205, 50, 70],
+        color_jitter: 12,
+        dispersion: 4,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.06,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "TNT",
+        phase: Phase::Solid, // placeable explosive block
+        density: 9000,
+        color: [160, 50, 45],
+        color_jitter: 10,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.06,
+        high_temp: 280.0,
+        high_to: FIRE, // autoignites (then detonates via blast hook)
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    // --- Materials & states ---
+    MaterialProps {
+        name: "Mercury",
+        phase: Phase::Liquid, // dense liquid metal; excellent heat conductor
+        density: 13500, // sinks through everything
+        color: [185, 185, 195],
+        color_jitter: 10,
+        dispersion: 3,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.50,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Wax",
+        phase: Phase::Solid, // melts when warm
+        density: 9000,
+        color: [235, 225, 190],
+        color_jitter: 10,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.06,
+        high_temp: 70.0,
+        high_to: MELTWAX,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Molten Wax",
+        phase: Phase::Liquid, // resolidifies when it cools
+        density: 950,
+        color: [240, 220, 165],
+        color_jitter: 10,
+        dispersion: 3,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 80.0,
+        conductivity: 0.06,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: 60.0,
+        low_to: WAX,
+    },
+    MaterialProps {
+        name: "Coal",
+        phase: Phase::Solid, // long-burning fuel
+        density: 9000,
+        color: [42, 42, 48],
+        color_jitter: 10,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.05,
+        high_temp: 450.0,
+        high_to: FIRE,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Obsidian",
+        phase: Phase::Solid, // hard glassy rock from quenched lava
+        density: 9000,
+        color: [28, 24, 40],
+        color_jitter: 8,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.08,
+        high_temp: 1200.0,
+        high_to: LAVA, // remelts
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    // --- Persistent heat sources ---
+    MaterialProps {
+        name: "Heater",
+        phase: Phase::Solid, // holds a fixed hot temperature
+        density: 9000,
+        color: [200, 70, 40],
+        color_jitter: 8,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 600.0,
+        conductivity: 0.20,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Cooler",
+        phase: Phase::Solid, // holds a fixed cold temperature
+        density: 9000,
+        color: [60, 120, 205],
+        color_jitter: 8,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: -60.0,
+        conductivity: 0.20,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
 ];
+
+/// Fixed temperature a persistent source holds, if any (Heater/Cooler).
+#[inline]
+pub fn pinned_temp(id: MaterialId) -> Option<f32> {
+    match id {
+        HEATER => Some(600.0),
+        COOLER => Some(-60.0),
+        _ => None,
+    }
+}
 
 /// Internal materials the user shouldn't paint (transient conduction states).
 #[inline]
 pub fn user_paintable(id: MaterialId) -> bool {
-    !matches!(id, EMPTY | CHARGED | COOLED)
+    !matches!(id, EMPTY | CHARGED | COOLED | LITLAMP)
 }
 
 /// Blast radius for explosive materials; 0 = not explosive. A function rather
@@ -568,7 +820,10 @@ pub fn user_paintable(id: MaterialId) -> bool {
 #[inline]
 pub fn explosive_radius(id: MaterialId) -> u8 {
     match id {
+        HYDROGEN => 2,
         GUNPOWDER => 4,
+        TNT => 6,
+        NITRO => 7,
         _ => 0,
     }
 }
@@ -635,6 +890,18 @@ pub static REACTIONS: &[Reaction] = &[
     Reaction { a: FIRE, b: THERMITE, a_to: FIRE, b_to: LAVA, prob: 0.6, min_temp: NEVER_COLD },
     Reaction { a: SPARK, b: THERMITE, a_to: CHARGED, b_to: LAVA, prob: 1.0, min_temp: NEVER_COLD },
     Reaction { a: LAVA, b: THERMITE, a_to: LAVA, b_to: LAVA, prob: 0.5, min_temp: NEVER_COLD },
+    // Electronics: a live wire (charge/spark) lights an adjacent lamp.
+    Reaction { a: CHARGED, b: LAMP, a_to: CHARGED, b_to: LITLAMP, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction { a: SPARK, b: LAMP, a_to: SPARK, b_to: LITLAMP, prob: 1.0, min_temp: NEVER_COLD },
+    // Fuse: slow flame travel; a spark lights it.
+    Reaction { a: FIRE, b: FUSE, a_to: FIRE, b_to: FIRE, prob: 0.18, min_temp: NEVER_COLD },
+    Reaction { a: SPARK, b: FUSE, a_to: CHARGED, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
+    // Hydrogen: ignites readily (and detonates via the blast hook).
+    Reaction { a: FIRE, b: HYDROGEN, a_to: FIRE, b_to: FIRE, prob: 0.9, min_temp: NEVER_COLD },
+    // Coal: smoulders — fire creeps slowly, so a coal bed burns for a long time.
+    Reaction { a: FIRE, b: COAL, a_to: FIRE, b_to: FIRE, prob: 0.03, min_temp: NEVER_COLD },
+    // Quench: lava meeting water sometimes flash-freezes to obsidian (+ steam).
+    Reaction { a: LAVA, b: WATER, a_to: OBSIDIAN, b_to: STEAM, prob: 0.25, min_temp: NEVER_COLD },
 ];
 
 /// First reaction matching `(a, b)`, if any. Linear scan — the table is small.

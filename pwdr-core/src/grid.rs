@@ -323,6 +323,10 @@ impl Grid {
                             self.update_void(x, y, &NEIGHBOURS);
                             continue;
                         }
+                        if a == material::BATTERY {
+                            self.update_battery(x, y, &NEIGHBOURS);
+                            continue;
+                        }
                         // Tracks whether this cell has a live reactive partner.
                         // If so but the (probabilistic) reaction didn't fire this
                         // tick, we still keep the chunk awake — otherwise an
@@ -408,6 +412,24 @@ impl Grid {
             let (nx, ny) = (nx as usize, ny as usize);
             if self.material_at(nx, ny) == EMPTY {
                 self.transform(nx, ny, src);
+                self.touch(nx, ny);
+            }
+        }
+    }
+
+    /// Battery: energize adjacent copper. Charge then travels the wire; the
+    /// copper's refractory cycle makes the battery pulse naturally. Stays awake so
+    /// it keeps powering the circuit.
+    fn update_battery(&mut self, x: usize, y: usize, neigh: &[(isize, isize); 4]) {
+        self.touch(x, y);
+        for (dx, dy) in neigh {
+            let (nx, ny) = (x as isize + dx, y as isize + dy);
+            if !self.in_bounds(nx, ny) {
+                continue;
+            }
+            let (nx, ny) = (nx as usize, ny as usize);
+            if self.material_at(nx, ny) == material::COPPER {
+                self.transform(nx, ny, material::CHARGED);
                 self.touch(nx, ny);
             }
         }
@@ -523,6 +545,12 @@ impl Grid {
                 for y in y0..y1 {
                     for x in x0..x1 {
                         let i = self.idx(x, y);
+                        // Persistent heat sources hold their temperature each tick.
+                        if let Some(t) = material::pinned_temp(self.cells[i].material) {
+                            self.temp[i] = t;
+                            self.touch(x, y);
+                            continue;
+                        }
                         if self.try_transition(x, y, self.temp[i]) {
                             self.touch(x, y);
                         }
@@ -1126,6 +1154,10 @@ mod tests {
         ACID, BASALT, CHARGED, CLONE, COOLED, COPPER, CRYO, FIRE, FUME, GLASS, GUNPOWDER, ICE,
         LAVA, OIL, PLANT, SALT, SALTWATER, SAND, SMOKE, SPARK, STEAM, STONE, THERMITE, VOID, WATER,
         WOOD,
+    };
+    use crate::material::{
+        BATTERY, COAL, COOLER, FUSE, HEATER, HYDROGEN, LAMP, LITLAMP, MELTWAX, MERCURY, NITRO,
+        OBSIDIAN, WAX,
     };
 
     #[test]
@@ -2061,6 +2093,176 @@ mod tests {
         let (mut g, x, y) = boxed(COPPER, 1200.0);
         g.step();
         assert_eq!(g.material_at(x, y), LAVA, "molten copper -> lava");
+    }
+
+    // --- electronics / explosives / materials / heat-source tests ---
+
+    #[test]
+    fn battery_powers_wire_and_lights_lamp() {
+        let mut g = Grid::new(12, 4, 1);
+        for x in 0..12 {
+            g.set(x, 1, COPPER);
+        }
+        g.set(0, 0, BATTERY); // beside the wire's start
+        g.set(5, 0, LAMP); // beside the wire midway
+        let mut lit = false;
+        for _ in 0..60 {
+            g.step();
+            if g.count(LITLAMP) > 0 {
+                lit = true;
+                break;
+            }
+        }
+        assert!(lit, "battery drove charge down the wire and lit the lamp");
+    }
+
+    #[test]
+    fn fuse_burns_along_its_length() {
+        let mut g = Grid::new(20, 3, 1);
+        for x in 0..20 {
+            g.set(x, 1, FUSE);
+        }
+        g.set(0, 1, FIRE);
+        let fuse0 = g.count(FUSE);
+        for _ in 0..400 {
+            g.step();
+        }
+        assert!(g.count(FUSE) < fuse0 / 2, "fuse burned down: {}", g.count(FUSE));
+    }
+
+    #[test]
+    fn hydrogen_flashes_when_ignited() {
+        let mut g = Grid::new(16, 16, 1);
+        for y in 0..16 {
+            for x in 0..16 {
+                if x == 0 || y == 0 || x == 15 || y == 15 {
+                    g.set(x, y, STONE);
+                }
+            }
+        }
+        for y in 1..15 {
+            for x in 1..15 {
+                g.set(x, y, HYDROGEN);
+            }
+        }
+        let h0 = g.count(HYDROGEN);
+        g.set(8, 8, FIRE);
+        for _ in 0..30 {
+            g.step();
+        }
+        assert!(g.count(HYDROGEN) < h0 / 4, "hydrogen flashed off");
+    }
+
+    #[test]
+    fn nitro_blast_is_bigger_than_gunpowder() {
+        let fire_after = |mat: MaterialId| {
+            let mut g = Grid::new(40, 40, 1);
+            g.set(20, 20, mat);
+            g.set(19, 20, FIRE);
+            for _ in 0..3 {
+                g.step();
+            }
+            g.count(FIRE)
+        };
+        let nitro = fire_after(NITRO);
+        let gp = fire_after(crate::material::GUNPOWDER);
+        assert!(nitro > gp, "nitro blast ({nitro}) bigger than gunpowder ({gp})");
+    }
+
+    #[test]
+    fn mercury_sinks_below_water() {
+        let mut g = Grid::new(5, 16, 1);
+        for y in 6..16 {
+            for x in 0..5 {
+                g.set(x, y, WATER);
+            }
+        }
+        g.set(2, 0, MERCURY); // dropped into the pool from above
+        for _ in 0..300 {
+            g.step();
+        }
+        let merc = (0..16).find(|&y| g.material_at(2, y) == MERCURY);
+        let top_water = (0..16).find(|&y| g.material_at(2, y) == WATER);
+        if let (Some(m), Some(w)) = (merc, top_water) {
+            assert!(m > w, "mercury ({m}) sank below water ({w})");
+        } else {
+            panic!("expected mercury and water present");
+        }
+    }
+
+    #[test]
+    fn wax_melts_and_resolidifies() {
+        let (mut g, x, y) = boxed(WAX, 100.0);
+        g.step();
+        assert_eq!(g.material_at(x, y), MELTWAX, "warm wax melts");
+
+        let (mut h, hx, hy) = boxed(MELTWAX, 30.0);
+        h.step();
+        assert_eq!(h.material_at(hx, hy), WAX, "cool molten wax resolidifies");
+    }
+
+    #[test]
+    fn coal_burns_slowly() {
+        let mut g = Grid::new(7, 7, 1);
+        for y in 0..7 {
+            for x in 0..7 {
+                g.set(x, y, COAL);
+            }
+        }
+        let coal0 = g.count(COAL);
+        g.set(3, 3, FIRE);
+        for _ in 0..30 {
+            g.step();
+        }
+        let left = g.count(COAL);
+        assert!(left < coal0, "coal caught fire");
+        assert!(left > 0, "coal still smouldering after 30 ticks (slow burn): {left}");
+    }
+
+    #[test]
+    fn lava_quench_makes_obsidian() {
+        let mut g = Grid::new(9, 12, 5);
+        for y in 0..12 {
+            g.set(0, y, STONE);
+            g.set(8, y, STONE);
+        }
+        for x in 0..9 {
+            g.set(x, 11, STONE);
+        }
+        for y in 7..11 {
+            for x in 1..8 {
+                g.set(x, y, LAVA);
+            }
+        }
+        for y in 3..7 {
+            for x in 1..8 {
+                g.set(x, y, WATER);
+            }
+        }
+        let mut saw = false;
+        for _ in 0..200 {
+            g.step();
+            if g.count(OBSIDIAN) > 0 {
+                saw = true;
+                break;
+            }
+        }
+        assert!(saw, "quenched lava formed obsidian");
+    }
+
+    #[test]
+    fn heater_warms_and_cooler_chills() {
+        let (mut hg, _, _) = boxed(HEATER, 600.0);
+        for _ in 0..120 {
+            hg.step();
+        }
+        assert!(hg.temperature_at(1, 0) > 100.0, "heater warmed neighbour: {}", hg.temperature_at(1, 0));
+
+        let (mut cg, _, _) = boxed(COOLER, -60.0);
+        for _ in 0..120 {
+            cg.step();
+        }
+        assert!(cg.temperature_at(1, 0) < 0.0, "cooler chilled neighbour: {}", cg.temperature_at(1, 0));
     }
 
     #[test]
