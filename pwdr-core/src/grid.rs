@@ -436,11 +436,35 @@ impl Grid {
     /// `transients` count and wake set race-free.
     fn temperature_pass(&mut self, parallel: bool) {
         const EPS: f32 = 0.05;
+
+        // 1. Phase transitions first, on each cell's CURRENT temperature — a cell
+        //    that is already past a threshold transforms this tick regardless of
+        //    how fast it would diffuse away. (Diffusion-driven crossings transition
+        //    on the next tick; a one-tick lag is imperceptible.)
+        for cy in 0..self.chunks_y {
+            for cx in 0..self.chunks_x {
+                if !self.active[self.chunk_idx(cx, cy)] {
+                    continue;
+                }
+                let x0 = cx * CHUNK;
+                let y0 = cy * CHUNK;
+                let x1 = (x0 + CHUNK).min(self.width);
+                let y1 = (y0 + CHUNK).min(self.height);
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let i = self.idx(x, y);
+                        if self.try_transition(x, y, self.temp[i]) {
+                            self.touch(x, y);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Diffuse (uses any just-changed materials' conductivities).
         self.diffuse(parallel);
 
-        // Serial commit over awake chunks: copy the new temperatures in, wake
-        // chunks whose temperature moved, and apply phase transitions. Only awake
-        // cells were diffused, so we touch nothing in sleeping regions (O(awake)).
+        // 3. Commit new temperatures; wake chunks whose temperature moved.
         for cy in 0..self.chunks_y {
             for cx in 0..self.chunks_x {
                 if !self.active[self.chunk_idx(cx, cy)] {
@@ -454,12 +478,10 @@ impl Grid {
                     for x in x0..x1 {
                         let i = self.idx(x, y);
                         let new = self.temp_next[i];
-                        let changed = (new - self.temp[i]).abs() > EPS;
-                        self.temp[i] = new;
-                        let transitioned = self.try_transition(x, y, new);
-                        if changed || transitioned {
+                        if (new - self.temp[i]).abs() > EPS {
                             self.touch(x, y);
                         }
+                        self.temp[i] = new;
                     }
                 }
             }
@@ -505,19 +527,36 @@ impl Grid {
                 for x in x0..x1 {
                     let i = y * w + x;
                     let here = temp[i];
-                    // Insulated boundary: OOB neighbour contributes `here`.
-                    let mut sum = 0.0f32;
-                    sum += if x > 0 { temp[i - 1] } else { here };
-                    sum += if x + 1 < w { temp[i + 1] } else { here };
-                    sum += if y > 0 { temp[i - w] } else { here };
-                    sum += if y + 1 < h { temp[i + w] } else { here };
-                    let mat = cells[i].material;
-                    let rate = material::props(mat).conductivity;
-                    let mut next = here + rate * (sum * 0.25 - here);
-                    // Empty air gently relaxes to ambient — it's a weak heat sink,
-                    // so stray hot/cold pockets in air dissipate instead of
-                    // lingering and freezing/cooking neighbours later.
-                    if mat == EMPTY {
+                    let ci = material::props(cells[i].material).conductivity;
+                    // Per-edge flux: heat across a boundary is limited by the
+                    // WORSE conductor (thermal resistances in series). So copper
+                    // (0.25) shares heat fast with adjacent copper but barely
+                    // leaks into air (0.03) — a wire conducts along itself instead
+                    // of dumping into the surrounding air. Insulated boundary:
+                    // out-of-grid neighbours carry zero flux.
+                    let mut flux = 0.0f32;
+                    let mut edge = |j: usize| {
+                        let k = ci.min(material::props(cells[j].material).conductivity);
+                        flux += k * (temp[j] - here);
+                    };
+                    if x > 0 {
+                        edge(i - 1);
+                    }
+                    if x + 1 < w {
+                        edge(i + 1);
+                    }
+                    if y > 0 {
+                        edge(i - w);
+                    }
+                    if y + 1 < h {
+                        edge(i + w);
+                    }
+                    let mut next = here + flux;
+                    // Empty air is a weak ambient sink: it slowly relaxes to 20.
+                    // Safe now that air only exchanges with matter at air's own
+                    // low conductivity (per-edge min), so this no longer drains
+                    // conductors — it just keeps stray air heat/cold from lingering.
+                    if cells[i].material == EMPTY {
                         const AMBIENT: f32 = 20.0;
                         const AIR_RELAX: f32 = 0.05;
                         next += AIR_RELAX * (AMBIENT - next);
@@ -1355,6 +1394,42 @@ mod tests {
         let (mut g, x, y) = boxed(LAVA, 100.0);
         g.step();
         assert_eq!(g.material_at(x, y), BASALT, "cooled lava -> basalt");
+    }
+
+    #[test]
+    fn copper_conducts_heat_and_holds_it() {
+        // A lone hot copper cell in air must hold heat (not crash to ambient).
+        let mut s = Grid::new(9, 9, 1);
+        s.set(4, 4, COPPER);
+        s.set_temperature(4, 4, 1000.0);
+        for _ in 0..30 {
+            s.step();
+        }
+        assert!(
+            s.temperature_at(4, 4) > 60.0,
+            "copper retains heat (not instant room temp): {}",
+            s.temperature_at(4, 4)
+        );
+
+        // A copper wire carries heat down its length, and far better than air
+        // does over the same distance (heat flux is limited by the worse
+        // conductor, so copper barely leaks into the surrounding air while air
+        // itself relaxes toward ambient — copper is the clear conductor).
+        let mut g = Grid::new(40, 9, 1);
+        for x in 0..40 {
+            g.set(x, 4, COPPER);
+        }
+        for _ in 0..300 {
+            g.set_temperature(0, 4, 2000.0); // held source
+            g.step();
+        }
+        let wire = g.temperature_at(5, 4);
+        let air = g.temperature_at(5, 1);
+        assert!(wire > 120.0, "copper carried heat down the wire: {wire}");
+        assert!(
+            wire > air * 2.0 + 20.0,
+            "copper conducts far better than air: {wire} vs {air}"
+        );
     }
 
     #[test]
