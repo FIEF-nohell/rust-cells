@@ -328,8 +328,9 @@ impl Grid {
                             }
                             let b = self.cells[nidx].material;
 
-                            // Explosive ignition: contact with fire/spark detonates.
-                            let igniter = |m| m == material::FIRE || m == material::SPARK;
+                            // Explosive ignition: contact with fire/spark/lava detonates.
+                            let igniter =
+                                |m| m == material::FIRE || m == material::SPARK || m == material::LAVA;
                             let ra = material::explosive_radius(a);
                             let rb = material::explosive_radius(b);
                             if ra > 0 && igniter(b) {
@@ -890,6 +891,19 @@ impl Grid {
         Some(g)
     }
 
+    /// Render a temperature heat-map into RGBA8: blue (cold) → dark (ambient) →
+    /// red → yellow → white (very hot). Lets the UI visualize the heat field.
+    pub fn render_temperature_rgba(&mut self) -> &[u8] {
+        for (t, px) in self.temp.iter().zip(self.framebuffer.chunks_exact_mut(4)) {
+            let c = temp_color(*t);
+            px[0] = c[0];
+            px[1] = c[1];
+            px[2] = c[2];
+            px[3] = 255;
+        }
+        &self.framebuffer
+    }
+
     /// Stable FNV-1a hash over material/life/tint of every cell. Deterministic
     /// for a given seed + input sequence — used by golden tests.
     pub fn hash(&self) -> u64 {
@@ -901,6 +915,23 @@ impl Grid {
             }
         }
         h
+    }
+}
+
+/// Map a temperature (°C-like) to a heat-map RGB. Cold→blue, ambient(~20)→dark,
+/// then red→yellow→white as it heats. Used by the temperature overlay.
+pub fn temp_color(t: f32) -> [u8; 3] {
+    if t <= 20.0 {
+        // -60..20 : bright blue → near-black
+        let f = ((t + 60.0) / 80.0).clamp(0.0, 1.0); // 0 cold .. 1 ambient
+        [0, (30.0 * f) as u8, (255.0 * (1.0 - f)).max(20.0) as u8]
+    } else {
+        // 20..1000 : dark red → red → yellow → white
+        let f = ((t - 20.0) / 980.0).clamp(0.0, 1.0);
+        let r = (80.0 + 175.0 * (f / 0.4).min(1.0)) as u8;
+        let g = (255.0 * ((f - 0.25) / 0.45).clamp(0.0, 1.0)) as u8;
+        let b = (255.0 * ((f - 0.7) / 0.3).clamp(0.0, 1.0)) as u8;
+        [r, g, b]
     }
 }
 
@@ -1561,6 +1592,27 @@ mod tests {
             g.step();
         }
         assert!(g.count(WOOD) < wood0, "wood burned (at least partially)");
+    }
+
+    #[test]
+    fn lava_ignites_wood_on_contact() {
+        let mut g = Grid::new(8, 8, 1);
+        for y in 0..8 {
+            for x in 0..8 {
+                g.set(x, y, WOOD);
+            }
+        }
+        g.set(4, 4, LAVA); // lava embedded in wood
+        let wood0 = g.count(WOOD);
+        let mut saw_fire = false;
+        for _ in 0..60 {
+            g.step();
+            if g.count(FIRE) > 0 {
+                saw_fire = true;
+            }
+        }
+        assert!(saw_fire, "lava set the wood alight");
+        assert!(g.count(WOOD) < wood0, "wood burned from lava contact");
     }
 
     #[test]

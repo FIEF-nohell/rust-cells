@@ -474,8 +474,14 @@ pub static REACTIONS: &[Reaction] = &[
     Reaction { a: FIRE, b: FUME, a_to: FIRE, b_to: FIRE, prob: 0.7, min_temp: NEVER_COLD },
     Reaction { a: SPARK, b: FUME, a_to: SPARK, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
     Reaction { a: CHARGED, b: FUME, a_to: CHARGED, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
-    // Flammable solid: fire creeps along wood.
-    Reaction { a: FIRE, b: WOOD, a_to: FIRE, b_to: FIRE, prob: 0.05, min_temp: NEVER_COLD },
+    // Flammable solid: fire creeps along wood (every direction, not just up).
+    Reaction { a: FIRE, b: WOOD, a_to: FIRE, b_to: FIRE, prob: 0.20, min_temp: NEVER_COLD },
+    Reaction { a: SPARK, b: WOOD, a_to: SPARK, b_to: FIRE, prob: 0.5, min_temp: NEVER_COLD },
+    Reaction { a: CHARGED, b: WOOD, a_to: CHARGED, b_to: FIRE, prob: 0.5, min_temp: NEVER_COLD },
+    // Lava ignites everything flammable it touches (it's 1200 degrees).
+    Reaction { a: LAVA, b: OIL, a_to: LAVA, b_to: FIRE, prob: 0.6, min_temp: NEVER_COLD },
+    Reaction { a: LAVA, b: WOOD, a_to: LAVA, b_to: FIRE, prob: 0.25, min_temp: NEVER_COLD },
+    Reaction { a: LAVA, b: FUME, a_to: LAVA, b_to: FIRE, prob: 0.6, min_temp: NEVER_COLD },
     // Cold source: cryo freezes adjacent water regardless of its own temperature.
     Reaction { a: CRYO, b: WATER, a_to: CRYO, b_to: ICE, prob: 0.30, min_temp: NEVER_COLD },
 ];

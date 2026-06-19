@@ -67,8 +67,11 @@ async fn main() {
     let mut paused = false;
     let mut search = String::new();
     let mut last_tick_ms = 0.0f32;
+    let mut smooth_tick_ms = 0.0f32;
+    let mut smooth_fps = 60.0f32;
     let mut status = String::new();
     let mut pending_resize = false;
+    let mut heat_overlay = false;
 
     loop {
         let sim_px_w = gw as f32 * SCALE;
@@ -120,6 +123,9 @@ async fn main() {
         // --- controls ---
         if is_key_pressed(KeyCode::Space) {
             paused = !paused;
+        }
+        if is_key_pressed(KeyCode::F2) {
+            heat_overlay = !heat_overlay;
         }
         let mut do_single_step = false;
         if is_key_pressed(KeyCode::Right) {
@@ -214,8 +220,17 @@ async fn main() {
             }
         }
 
+        // --- telemetry smoothing (EMA) so the readout isn't jumpy ---
+        let inst_fps = 1.0 / get_frame_time().max(1e-4);
+        smooth_fps += (inst_fps - smooth_fps) * 0.08;
+        smooth_tick_ms += (last_tick_ms - smooth_tick_ms) * 0.08;
+
         // --- render ---
-        let fb = grid.render_rgba();
+        let fb = if heat_overlay {
+            grid.render_temperature_rgba()
+        } else {
+            grid.render_rgba()
+        };
         image.get_image_data_mut().copy_from_slice(rgba_chunks(fb));
         texture.update(&image);
 
@@ -237,7 +252,10 @@ async fn main() {
         }
 
         draw_palette(&palette, selected, &search, panel_x);
-        draw_hud(&grid, gw, gh, selected, brush, paused, last_tick_ms, &status, mx, my, sim_px_w, sim_px_h);
+        draw_hud(
+            &grid, gw, gh, selected, brush, paused, heat_overlay, smooth_fps, smooth_tick_ms,
+            &status, mx, my, sim_px_w, sim_px_h,
+        );
 
         next_frame().await;
     }
@@ -304,6 +322,7 @@ fn draw_palette(palette: &[PaletteItem], selected: MaterialId, search: &str, x0:
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn draw_hud(
     grid: &Grid,
     gw: usize,
@@ -311,6 +330,8 @@ fn draw_hud(
     selected: MaterialId,
     brush: usize,
     paused: bool,
+    heat_overlay: bool,
+    fps: f32,
     tick_ms: f32,
     status: &str,
     mx: f32,
@@ -320,9 +341,17 @@ fn draw_hud(
 ) {
     let line = |i: f32, s: &str| draw_text(s, 8.0, 18.0 + i * 18.0, 18.0, WHITE);
 
-    draw_rectangle(0.0, 0.0, 340.0, 96.0, Color::from_rgba(0, 0, 0, 110));
-    line(0.0, &format!("pwdr  {}x{}  {:.0} fps", gw, gh, get_fps()));
-    line(1.0, &format!("tick {:.3} ms  {}", tick_ms, if paused { "PAUSED" } else { "running" }));
+    draw_rectangle(0.0, 0.0, 360.0, 96.0, Color::from_rgba(0, 0, 0, 110));
+    line(0.0, &format!("pwdr  {}x{}  {:.0} fps", gw, gh, fps));
+    line(
+        1.0,
+        &format!(
+            "tick {:.2} ms  {}{}",
+            tick_ms,
+            if paused { "PAUSED" } else { "running" },
+            if heat_overlay { "  [HEAT]" } else { "" }
+        ),
+    );
     line(2.0, &format!("brush {}  sel: {}", brush, material::props(selected).name));
 
     if mx >= 0.0 && mx < sim_w && my >= 0.0 && my < sim_h {
@@ -338,7 +367,7 @@ fn draw_hud(
     }
 
     draw_text(
-        "L paint (empty only)  R erase  Space pause  -> step  Shift+wheel brush  F5 save  F9 load  Del clear",
+        "L paint  R erase  Space pause  -> step  Shift+wheel brush  F2 heat  F5 save  F9 load  Del clear",
         8.0,
         sim_h - 24.0,
         16.0,
