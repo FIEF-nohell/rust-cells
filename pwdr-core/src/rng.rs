@@ -27,6 +27,16 @@ impl Rng {
         }
     }
 
+    /// Exact internal state — for save/load round-trips.
+    pub fn state(&self) -> [u64; 4] {
+        self.s
+    }
+
+    /// Reconstruct from a previously saved [`Rng::state`].
+    pub fn from_state(s: [u64; 4]) -> Self {
+        Rng { s }
+    }
+
     #[inline]
     pub fn next_u64(&mut self) -> u64 {
         let result = self.s[1]

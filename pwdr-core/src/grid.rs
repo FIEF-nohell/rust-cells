@@ -719,6 +719,99 @@ impl Grid {
         &self.framebuffer
     }
 
+    // --- save / load -------------------------------------------------------
+
+    /// Serialize the full grid to a byte blob (dimensions, RNG state, cells, and
+    /// the temperature field). File IO lives in the app; this stays pure so the
+    /// core keeps zero graphics/platform deps. Reloading reproduces subsequent
+    /// ticks bit-for-bit (RNG state is preserved).
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(16 + self.cells.len() * 8);
+        out.extend_from_slice(b"PWDR");
+        out.push(1); // version
+        out.extend_from_slice(&(self.width as u32).to_le_bytes());
+        out.extend_from_slice(&(self.height as u32).to_le_bytes());
+        out.push(self.gen);
+        out.push(self.frame_parity as u8);
+        for v in self.rng.state() {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        for c in &self.cells {
+            out.push(c.material);
+            out.push(c.gen);
+            out.push(c.life);
+            out.push(c.tint);
+        }
+        for t in &self.temp {
+            out.extend_from_slice(&t.to_le_bytes());
+        }
+        // Chunk wake bits: which chunks are queued for the next tick. Restoring
+        // these is what makes the reloaded grid consume the RNG identically and
+        // thus evolve bit-for-bit.
+        for w in &self.wake {
+            out.push(*w as u8);
+        }
+        out
+    }
+
+    /// Rebuild a grid from [`Grid::serialize`] output. Returns `None` on a bad
+    /// magic, version, or truncated/oversized buffer.
+    pub fn deserialize(bytes: &[u8]) -> Option<Grid> {
+        let mut p = 0usize;
+        let take = |p: &mut usize, n: usize| -> Option<&[u8]> {
+            let s = bytes.get(*p..*p + n)?;
+            *p += n;
+            Some(s)
+        };
+        if take(&mut p, 4)? != b"PWDR" {
+            return None;
+        }
+        if take(&mut p, 1)?[0] != 1 {
+            return None;
+        }
+        let rd_u32 = |p: &mut usize| -> Option<u32> {
+            Some(u32::from_le_bytes(take(p, 4)?.try_into().ok()?))
+        };
+        let width = rd_u32(&mut p)? as usize;
+        let height = rd_u32(&mut p)? as usize;
+        if width == 0 || height == 0 {
+            return None;
+        }
+        let n = width.checked_mul(height)?;
+        let gen = take(&mut p, 1)?[0];
+        let frame_parity = take(&mut p, 1)?[0] != 0;
+        let mut state = [0u64; 4];
+        for s in &mut state {
+            *s = u64::from_le_bytes(take(&mut p, 8)?.try_into().ok()?);
+        }
+
+        let mut g = Grid::new(width, height, 0);
+        g.rng = Rng::from_state(state);
+        g.gen = gen;
+        g.frame_parity = frame_parity;
+
+        let mut transients = 0usize;
+        for i in 0..n {
+            let rec = take(&mut p, 4)?;
+            let (material, gen, life, tint) = (rec[0], rec[1], rec[2], rec[3]);
+            if material as usize >= material::MATERIALS.len() {
+                return None;
+            }
+            if life > 0 {
+                transients += 1;
+            }
+            g.cells[i] = Cell { material, gen, life, tint };
+        }
+        for i in 0..n {
+            g.temp[i] = f32::from_le_bytes(take(&mut p, 4)?.try_into().ok()?);
+        }
+        g.transients = transients;
+        for i in 0..g.wake.len() {
+            g.wake[i] = take(&mut p, 1)?[0] != 0;
+        }
+        Some(g)
+    }
+
     /// Stable FNV-1a hash over material/life/tint of every cell. Deterministic
     /// for a given seed + input sequence — used by golden tests.
     pub fn hash(&self) -> u64 {
@@ -1396,6 +1489,36 @@ mod tests {
         let (mut g, x, y) = boxed(SAND, 1200.0);
         g.step();
         assert_eq!(g.material_at(x, y), GLASS, "molten sand -> glass");
+    }
+
+    #[test]
+    fn serialize_roundtrip_preserves_state_and_future() {
+        let mut g = Grid::new(48, 48, 0xBEEF);
+        g.paint(24, 4, 6, SAND);
+        g.paint(10, 4, 4, WATER);
+        g.set(24, 24, FIRE);
+        for _ in 0..60 {
+            g.step();
+        }
+        let blob = g.serialize();
+        let mut g2 = Grid::deserialize(&blob).expect("valid blob");
+        assert_eq!(g2.cells(), g.cells(), "cells restored");
+        assert_eq!(g2.hash(), g.hash(), "hash restored");
+        // RNG state preserved -> identical future evolution.
+        for _ in 0..60 {
+            g.step();
+            g2.step();
+        }
+        assert_eq!(g.hash(), g2.hash(), "reloaded grid evolves identically");
+    }
+
+    #[test]
+    fn deserialize_rejects_garbage() {
+        assert!(Grid::deserialize(b"nope").is_none());
+        assert!(Grid::deserialize(&[]).is_none());
+        let mut ok = Grid::new(4, 4, 1).serialize();
+        ok.truncate(ok.len() - 3); // corrupt/truncate
+        assert!(Grid::deserialize(&ok).is_none());
     }
 
     #[test]

@@ -14,7 +14,7 @@ Living log of decisions, roster, test status, perf numbers. One section per mile
 | M5 Temperature & transitions | ✅ done | 30 unit + proptest |
 | M6 Reactions & energy | ✅ done | 35 unit + proptest |
 | M7 Full roster | ✅ done | 40 unit + 2 proptest |
-| M8 App polish | ⏳ | |
+| M8 App polish | ✅ done | 42 unit + 2 proptest |
 | M9 Threading | ⏳ | |
 
 ---
@@ -235,3 +235,22 @@ all prior. New **full-roster fuzz proptest**: random ops over *every* material +
 ticks never panic / never corrupt ids.
 
 **App:** keys 1–9 + Q/E/F/C/G/T/Z/V/B cover the roster (proper palette UI in M8).
+
+---
+
+## M8 — App polish ✅
+
+**Decisions**
+- **Save/load** is pure-core: `Grid::serialize()`/`deserialize()` produce/consume a byte
+  blob (magic+version, dims, RNG state, per-cell material/gen/life/tint, temperature field,
+  chunk wake bits). Saving the RNG state *and* the wake set makes a reloaded grid evolve
+  **bit-for-bit identically** (RNG consumption depends on which chunks are awake). File IO
+  stays in the app (`F5`/`F9` ↔ `pwdr.save`) so the core keeps zero platform assumptions.
+- App UI: **categorized + searchable palette** (grouped by phase; type to filter by name —
+  text input feeds the search box, controls use non-text keys so they never collide),
+  click-to-select with swatches; brush size `[`/`]`; **pause** (Space) + **single-step**
+  (→); coordinate + material + temperature readout under the cursor; FPS + per-tick time;
+  clear (Del). Fixed-timestep sim capped at 8 substeps/frame to avoid spiral-of-death.
+
+**Tests (42 unit + 2 proptest):** added serialize round-trip (state + identical future
+evolution) and deserialize-rejects-garbage; all prior green.
