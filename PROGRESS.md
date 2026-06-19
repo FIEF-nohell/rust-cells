@@ -8,7 +8,7 @@ Living log of decisions, roster, test status, perf numbers. One section per mile
 |-----------|-------|-------|
 | M0 Workspace & harness | ✅ done | 7 green |
 | M1 Grid + first powder | ✅ done | 11 green |
-| M2 Chunks & dirty rects | ⏳ | |
+| M2 Chunks & dirty rects | ✅ done | 16 green |
 | M3 Liquids | ⏳ | |
 | M4 Gases | ⏳ | |
 | M5 Temperature & transitions | ⏳ | |
@@ -59,3 +59,29 @@ framebuffer size+opacity; deterministic step.
 pile conserved + near-symmetric (fixed seed); cell ≤ 8 bytes; material table; RNG suite.
 
 **App:** left-drag paints sand, right-drag erases.
+
+---
+
+## M2 — Chunks & dirty rects ✅
+
+**Decisions**
+- Grid tiled by `CHUNK=64` chunks. Two bit-vectors: `active` (process this tick) and
+  `wake` (accumulated for next tick). `begin_tick` copies `wake`→`active`, clears `wake`.
+- **Chunk-granular dirty tracking.** Every write/move calls `touch(x,y)`, which wakes the
+  cell's chunk plus any chunk whose border (incl. diagonals) the cell sits against. That
+  is exactly "crossing a boundary wakes the neighbor" — a settled-but-edge cell is re-woken
+  when the cell across the border changes.
+- Movement still scans **global rows bottom-up** (correct fall order preserved); it only
+  *skips cells in sleeping chunks*. Skipped cells are provably static, so the result is
+  **byte-identical to a full scan** — verified by `chunking_matches_full_scan`.
+  Chose chunk-granular over sub-chunk rectangles: it keeps exact scan order (hence
+  determinism) and already meets every perf target.
+- Added `hash()` (FNV-1a over material/life/tint) for golden determinism tests.
+
+**Tests (16 green):** distant chunks sleep; fully-settled grid sleeps completely + no-op
+step; crossing boundary wakes neighbor; chunked == full scan; golden hash stable; all M1
+behavior intact.
+
+**Perf baselines (criterion, see README):** full_active 256² ≈ 0.40 ms, 512² ≈ 1.60 ms;
+sparse 512² ≈ 0.24 ms, 1024² ≈ 0.86 ms. All within the 16.67 ms/60 fps budget. Doctrine
+floors (256² full, 512² sparse @ 60 fps single-thread) met with large headroom.

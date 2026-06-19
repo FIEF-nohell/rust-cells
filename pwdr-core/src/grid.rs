@@ -1,8 +1,12 @@
-//! The simulation grid: a flat `Vec<Cell>` indexed `y * width + x`, plus the
-//! per-tick update. No nested vecs — cache locality dominates the hot loop.
+//! The simulation grid: a flat `Vec<Cell>` indexed `y * width + x`, the per-tick
+//! update, and chunked activity tracking so sleeping regions are skipped.
 
 use crate::material::{self, MaterialId, Phase, EMPTY};
 use crate::rng::Rng;
+
+/// Chunk edge length. Grid is tiled by `CHUNK x CHUNK` chunks; each tracks
+/// whether it needs processing. 64 per the locked decision.
+pub const CHUNK: usize = 64;
 
 /// One grid cell. Kept to 4 bytes (`<= 8` per the contract).
 ///
@@ -39,11 +43,22 @@ pub struct Grid {
     frame_parity: bool,
     rng: Rng,
     framebuffer: Vec<u8>,
+
+    // --- chunked activity tracking ---
+    chunks_x: usize,
+    chunks_y: usize,
+    /// Chunks to process *this* tick.
+    active: Vec<bool>,
+    /// Chunks to process *next* tick — accumulated as cells are written.
+    wake: Vec<bool>,
 }
 
 impl Grid {
     pub fn new(width: usize, height: usize, seed: u64) -> Self {
         assert!(width > 0 && height > 0, "grid must be non-empty");
+        let chunks_x = width.div_ceil(CHUNK);
+        let chunks_y = height.div_ceil(CHUNK);
+        let nchunks = chunks_x * chunks_y;
         Grid {
             width,
             height,
@@ -52,6 +67,12 @@ impl Grid {
             frame_parity: false,
             rng: Rng::new(seed),
             framebuffer: vec![0; width * height * 4],
+            chunks_x,
+            chunks_y,
+            active: vec![false; nchunks],
+            // Start with every chunk queued so the first tick visits all of it,
+            // then chunks settle to sleep.
+            wake: vec![true; nchunks],
         }
     }
 
@@ -89,10 +110,34 @@ impl Grid {
         self.cells[self.idx(x, y)].material == EMPTY
     }
 
+    /// Read-only view of all cells (tests / golden hashing).
+    pub fn cells(&self) -> &[Cell] {
+        &self.cells
+    }
+
     /// Count cells of a given material — test/debug helper.
     pub fn count(&self, id: MaterialId) -> usize {
         self.cells.iter().filter(|c| c.material == id).count()
     }
+
+    /// Number of chunks awake (queued for next tick). Test/HUD helper.
+    pub fn awake_chunk_count(&self) -> usize {
+        self.wake.iter().filter(|&&w| w).count()
+    }
+
+    /// Whether the chunk containing cell (x,y) is queued awake for next tick.
+    pub fn chunk_awake_at(&self, x: usize, y: usize) -> bool {
+        self.wake[self.chunk_idx(x / CHUNK, y / CHUNK)]
+    }
+
+    pub fn chunks_x(&self) -> usize {
+        self.chunks_x
+    }
+    pub fn chunks_y(&self) -> usize {
+        self.chunks_y
+    }
+
+    // --- editing -----------------------------------------------------------
 
     /// Place a single cell of `mat` with a fresh per-cell tint. `EMPTY` clears.
     pub fn set(&mut self, x: usize, y: usize, mat: MaterialId) {
@@ -104,10 +149,10 @@ impl Grid {
             life: 0,
             tint,
         };
+        self.touch(x, y);
     }
 
-    /// Paint a filled disc of `mat` (Chebyshev-ish round brush). `radius` 0 = 1 cell.
-    /// Erase by painting `EMPTY`.
+    /// Paint a filled disc of `mat`. `radius` 0 = 1 cell. Erase by painting `EMPTY`.
     pub fn paint(&mut self, cx: usize, cy: usize, radius: usize, mat: MaterialId) {
         let r = radius as isize;
         let (cx, cy) = (cx as isize, cy as isize);
@@ -124,6 +169,59 @@ impl Grid {
         }
     }
 
+    // --- chunk bookkeeping -------------------------------------------------
+
+    #[inline]
+    fn chunk_idx(&self, cx: usize, cy: usize) -> usize {
+        cy * self.chunks_x + cx
+    }
+
+    #[inline]
+    fn wake_chunk(&mut self, cx: usize, cy: usize) {
+        let i = self.chunk_idx(cx, cy);
+        self.wake[i] = true;
+    }
+
+    /// Mark a cell's chunk — and any chunk whose border it sits against,
+    /// including diagonals — awake for next tick. This is how "crossing a
+    /// boundary wakes the neighbor": every write/move calls `touch`.
+    #[inline]
+    fn touch(&mut self, x: usize, y: usize) {
+        let cx = x / CHUNK;
+        let cy = y / CHUNK;
+        let on_left = x % CHUNK == 0 && cx > 0;
+        let on_right = x % CHUNK == CHUNK - 1 && cx + 1 < self.chunks_x;
+        let on_top = y % CHUNK == 0 && cy > 0;
+        let on_bot = y % CHUNK == CHUNK - 1 && cy + 1 < self.chunks_y;
+
+        self.wake_chunk(cx, cy);
+        if on_left {
+            self.wake_chunk(cx - 1, cy);
+        }
+        if on_right {
+            self.wake_chunk(cx + 1, cy);
+        }
+        if on_top {
+            self.wake_chunk(cx, cy - 1);
+        }
+        if on_bot {
+            self.wake_chunk(cx, cy + 1);
+        }
+        // diagonals
+        if on_left && on_top {
+            self.wake_chunk(cx - 1, cy - 1);
+        }
+        if on_right && on_top {
+            self.wake_chunk(cx + 1, cy - 1);
+        }
+        if on_left && on_bot {
+            self.wake_chunk(cx - 1, cy + 1);
+        }
+        if on_right && on_bot {
+            self.wake_chunk(cx + 1, cy + 1);
+        }
+    }
+
     // --- simulation --------------------------------------------------------
 
     fn begin_tick(&mut self) {
@@ -133,6 +231,11 @@ impl Grid {
                 c.gen = 0;
             }
             self.gen = 1;
+        }
+        // This tick processes whatever was queued last tick; start a fresh queue.
+        self.active.copy_from_slice(&self.wake);
+        for w in &mut self.wake {
+            *w = false;
         }
     }
 
@@ -144,16 +247,24 @@ impl Grid {
     }
 
     /// Bottom-up scan so a falling cell moves exactly one row per tick.
-    /// Horizontal direction alternates each frame to avoid directional bias.
+    /// Horizontal direction alternates each frame. Cells in sleeping chunks are
+    /// skipped — they are provably static, so the result is identical to a full
+    /// scan but cheaper.
     fn movement_pass(&mut self) {
         for y in (0..self.height).rev() {
+            let cy = y / CHUNK;
+            let row_base = cy * self.chunks_x;
             if self.frame_parity {
                 for x in 0..self.width {
-                    self.update_cell(x, y);
+                    if self.active[row_base + x / CHUNK] {
+                        self.update_cell(x, y);
+                    }
                 }
             } else {
                 for x in (0..self.width).rev() {
-                    self.update_cell(x, y);
+                    if self.active[row_base + x / CHUNK] {
+                        self.update_cell(x, y);
+                    }
                 }
             }
         }
@@ -176,12 +287,9 @@ impl Grid {
     /// Sinks through lighter fluids via the generalized density swap.
     fn update_powder(&mut self, x: usize, y: usize) {
         let mat = self.material_at(x, y);
-
-        // Straight down.
         if self.try_move(x, y, x as isize, y as isize + 1, mat) {
             return;
         }
-        // Down-diagonals, randomized order.
         let left_first = self.rng.bool();
         let (a, b) = if left_first { (-1, 1) } else { (1, -1) };
         if self.try_move(x, y, x as isize + a, y as isize + 1, mat) {
@@ -190,8 +298,8 @@ impl Grid {
         let _ = self.try_move(x, y, x as isize + b, y as isize + 1, mat);
     }
 
-    /// If `mat` at (x,y) can displace whatever is at (tx,ty), swap them and tag
-    /// both as moved. Returns whether a move happened.
+    /// If `mat` at (x,y) can displace whatever is at (tx,ty), swap them, tag
+    /// both moved, and wake the affected chunks. Returns whether a move happened.
     #[inline]
     fn try_move(&mut self, x: usize, y: usize, tx: isize, ty: isize, mat: MaterialId) -> bool {
         if !self.in_bounds(tx, ty) {
@@ -213,6 +321,8 @@ impl Grid {
         self.cells.swap(i, j);
         self.cells[i].gen = self.gen;
         self.cells[j].gen = self.gen;
+        self.touch(x, y);
+        self.touch(tx, ty);
     }
 
     // --- rendering ---------------------------------------------------------
@@ -239,11 +349,23 @@ impl Grid {
         }
         &self.framebuffer
     }
+
+    /// Stable FNV-1a hash over material/life/tint of every cell. Deterministic
+    /// for a given seed + input sequence — used by golden tests.
+    pub fn hash(&self) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for c in &self.cells {
+            for b in [c.material, c.life, c.tint] {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        h
+    }
 }
 
 /// Generalized displacement rule: heavier movable cell swaps through a lighter
 /// fluid/gas; anything moves into empty. Solids and same-or-denser block.
-/// This one rule covers sand-through-water, oil-on-water, light-gas-rising.
 #[inline]
 pub fn displaces(mover: MaterialId, target: MaterialId) -> bool {
     if target == EMPTY {
@@ -307,27 +429,110 @@ mod tests {
     fn pile_is_conserved_and_roughly_symmetric() {
         let w = 41;
         let mut g = Grid::new(w, 30, 12345);
-        // Drop a column of sand onto the center; let it pile.
         for _ in 0..200 {
             g.set(w / 2, 0, SAND);
             g.step();
         }
-        // Run to rest.
         for _ in 0..2000 {
             g.step();
         }
-        // Mass conserved: never duplicated/vanished.
         assert!(g.count(SAND) > 0);
-        // Roughly symmetric: left/right halves of the bottom row balance.
         let bottom = g.height() - 1;
         let left: usize = (0..w / 2).filter(|&x| g.material_at(x, bottom) == SAND).count();
         let right: usize = (w / 2 + 1..w)
             .filter(|&x| g.material_at(x, bottom) == SAND)
             .count();
-        let diff = left.abs_diff(right);
         assert!(
-            diff <= 3,
+            left.abs_diff(right) <= 3,
             "pyramid should be near-symmetric: left={left} right={right}"
         );
     }
+
+    // --- M2 chunking tests ---
+
+    #[test]
+    fn distant_chunks_sleep() {
+        // 4x4 chunks. Activity only top-left; far chunks must settle to asleep.
+        let mut g = Grid::new(256, 256, 7);
+        g.paint(20, 20, 4, SAND);
+        for _ in 0..400 {
+            g.step();
+        }
+        // Bottom-right chunk never had activity -> asleep.
+        assert!(!g.chunk_awake_at(250, 250), "far chunk should sleep");
+        // And far fewer than all chunks are awake.
+        assert!(
+            g.awake_chunk_count() < g.chunks_x() * g.chunks_y(),
+            "most chunks should be asleep"
+        );
+    }
+
+    #[test]
+    fn fully_settled_grid_sleeps_completely() {
+        let mut g = Grid::new(128, 128, 1);
+        g.paint(64, 10, 5, SAND);
+        for _ in 0..600 {
+            g.step();
+        }
+        assert_eq!(g.awake_chunk_count(), 0, "settled grid fully asleep");
+        // A further step must be a no-op (nothing awake).
+        let before = g.hash();
+        g.step();
+        assert_eq!(g.hash(), before, "asleep grid does not change");
+    }
+
+    #[test]
+    fn crossing_boundary_wakes_neighbor() {
+        // Drop sand just above a horizontal chunk boundary so it falls across.
+        let mut g = Grid::new(128, 128, 3);
+        g.set(30, CHUNK - 1, SAND); // bottom edge of top chunk row
+        g.step(); // sand falls to y=CHUNK, the chunk below
+        assert_eq!(g.material_at(30, CHUNK), SAND, "fell across boundary");
+        assert!(
+            g.chunk_awake_at(30, CHUNK),
+            "destination (lower) chunk must be awake"
+        );
+    }
+
+    #[test]
+    fn chunking_matches_full_scan() {
+        // Behavior unchanged: chunked stepping == forcing every chunk awake.
+        let mut chunked = Grid::new(192, 160, 99);
+        let mut full = Grid::new(192, 160, 99);
+        for g in [&mut chunked, &mut full] {
+            for i in 0..30 {
+                g.paint(20 + i * 5, 5, 3, SAND);
+            }
+        }
+        for _ in 0..500 {
+            // `full` keeps every chunk awake each tick (skipping disabled).
+            for w in full.wake.iter_mut() {
+                *w = true;
+            }
+            chunked.step();
+            full.step();
+            assert_eq!(
+                chunked.cells(),
+                full.cells(),
+                "chunked result must match full scan"
+            );
+        }
+    }
+
+    #[test]
+    fn golden_hash_is_stable() {
+        // Fixed scenario, fixed seed, N ticks -> known hash. Regenerate by
+        // running once and pasting the printed value (see PROGRESS.md).
+        let mut g = Grid::new(96, 96, 0xABCDEF);
+        for i in 0..20 {
+            g.paint(10 + i * 4, 4, 2, SAND);
+        }
+        for _ in 0..300 {
+            g.step();
+        }
+        assert_eq!(g.hash(), GOLDEN_M2, "golden mismatch — see regeneration note");
+    }
+
+    // Regenerate: temporarily `assert_eq!(g.hash(), 0)` and read the panic msg.
+    const GOLDEN_M2: u64 = 11145926252808830224;
 }
