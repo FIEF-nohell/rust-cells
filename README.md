@@ -23,16 +23,35 @@ Single-threaded, one fixed tick. `release`/`bench` profile (LTO thin, codegen-un
 Measured on the dev machine (criterion, `--measurement-time 4`). Hardware varies; these
 are the regression reference, not absolute claims.
 
-| Benchmark | Regime | Time / tick | Ticks/s | 60 fps? |
-|-----------|--------|-------------|---------|---------|
-| `full_active_256`  | 256×256, every cell moving | ~1.02 ms | ~980  | ✓ |
-| `full_active_512`  | 512×512, every cell moving | ~3.94 ms | ~254  | ✓ |
-| `sparse_512`       | 512×512, small active blob  | ~0.39 ms | ~2550 | ✓ |
-| `sparse_1024`      | 1024×1024, small active blob| ~1.14 ms | ~875  | ✓ |
+60 fps budget = **16.67 ms/tick**. Numbers below are *indicative* — measured on a heavily
+shared 22-core CI-class box, so absolute times swing run-to-run (e.g. `full_active_512` was
+seen at 4–10 ms across runs). The relative serial↔parallel comparison and the
+pass/fail-against-budget verdicts are stable; re-run `cargo bench` on your machine for hard
+numbers.
 
-Baseline established at **M2** (after chunking); refreshed at **M5** after adding the
-temperature/diffusion pass (movement + heat run only on awake chunks, so settled or
-thermally-uniform regions still cost nothing). Targets from the doctrine — 256² fully
-active @ 60 fps and 512² sparse @ 60 fps single-threaded — are met with large headroom;
-512² *fully* active also clears 60 fps. The 1024² fully-active stretch target is reserved
-for M9 (threading).
+| Benchmark | Regime | Time / tick | 60 fps? |
+|-----------|--------|-------------|---------|
+| `full_active_256`  | 256×256, every cell moving | ~1–2 ms   | ✓ |
+| `full_active_512`  | 512×512, every cell moving | ~4–10 ms  | ✓ |
+| `sparse_512`       | 512×512, small active blob  | ~1 ms     | ✓ |
+| `sparse_1024`      | 1024×1024, small active blob| ~3.4 ms   | ✓ |
+
+### Threading (M9)
+
+The heat-diffusion stencil is parallelized over awake chunks with rayon (`step_parallel`).
+It is a pure Jacobi pass, so the parallel tick is **byte-identical to the serial tick**
+(verified by `parallel_step_matches_serial_bit_for_bit`). Movement and reactions stay
+single-threaded so the seeded RNG is consumed in a fixed order — every determinism/golden
+guarantee is preserved.
+
+| Benchmark | Serial | Parallel |
+|-----------|--------|----------|
+| `full_active_512`  | ~5–10 ms  | ~10 ms (rayon overhead ≥ win at this size) |
+| `full_active_1024` | ~44 ms    | ~37 ms |
+
+**Verdict vs doctrine targets:** the hard floors — 256² fully active and 512² sparse @
+60 fps single-threaded — are met with headroom. The **1024² fully-active @ 60 fps
+stretch is not reached** (≈37 ms threaded): at that scale the *serial movement* pass
+dominates, and movement is intentionally not parallelized to keep the strict
+RNG-ordered determinism. Parallelizing movement (deterministic chunk-coloring + per-chunk
+RNG) is the documented next step to chase the stretch.

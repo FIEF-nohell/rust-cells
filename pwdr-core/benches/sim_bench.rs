@@ -45,6 +45,26 @@ fn bench(c: &mut Criterion) {
         b.iter_batched(|| sparse(1024), |mut g| g.step(), BatchSize::SmallInput)
     });
 
+    // M9 threading: parallel temperature diffusion. Compare serial vs parallel
+    // on the largest fully-active grids (where heat diffusion dominates).
+    grp.bench_function("full_active_1024_serial", |b| {
+        b.iter_batched(|| full_active(1024), |mut g| g.step(), BatchSize::SmallInput)
+    });
+    grp.bench_function("full_active_1024_parallel", |b| {
+        b.iter_batched(
+            || full_active(1024),
+            |mut g| g.step_parallel(),
+            BatchSize::SmallInput,
+        )
+    });
+    grp.bench_function("full_active_512_parallel", |b| {
+        b.iter_batched(
+            || full_active(512),
+            |mut g| g.step_parallel(),
+            BatchSize::SmallInput,
+        )
+    });
+
     grp.finish();
 }
 

@@ -3,6 +3,7 @@
 
 use crate::material::{self, MaterialId, Phase, EMPTY};
 use crate::rng::Rng;
+use rayon::prelude::*;
 
 /// Chunk edge length. Grid is tiled by `CHUNK x CHUNK` chunks; each tracks
 /// whether it needs processing. 64 per the locked decision.
@@ -41,6 +42,8 @@ pub struct Grid {
     /// complicate diffusion. It is only touched in the temperature pass, so it
     /// stays out of the movement hot path entirely.
     temp: Vec<f32>,
+    /// Scratch buffer for the Jacobi diffusion pass (reused each tick).
+    temp_next: Vec<f32>,
     /// Current moved-tag generation. Cycles 1..=255; 0 is the "untouched"
     /// sentinel. On wrap we clear all tags (amortized O(N)/255 ticks) so a
     /// stale tag can never collide with a new tick's generation.
@@ -73,6 +76,7 @@ impl Grid {
             height,
             cells: vec![Cell::EMPTY; width * height],
             temp: vec![material::props(EMPTY).default_temp; width * height],
+            temp_next: vec![material::props(EMPTY).default_temp; width * height],
             gen: 0,
             frame_parity: false,
             rng: Rng::new(seed),
@@ -258,12 +262,26 @@ impl Grid {
         }
     }
 
-    /// Advance one fixed tick.
+    /// Advance one fixed tick (single-threaded).
     pub fn step(&mut self) {
+        self.step_inner(false);
+    }
+
+    /// Advance one fixed tick with the heat-diffusion stencil parallelized over
+    /// rows via rayon (M9). The diffusion is a pure Jacobi pass (reads the old
+    /// field, writes a scratch buffer), so it is **order-independent**: the result
+    /// is byte-identical to [`Grid::step`] regardless of thread count. Movement
+    /// and reactions stay single-threaded so the seeded RNG is consumed in a
+    /// fixed order and every determinism/golden guarantee holds unchanged.
+    pub fn step_parallel(&mut self) {
+        self.step_inner(true);
+    }
+
+    fn step_inner(&mut self, parallel: bool) {
         self.begin_tick();
         self.reactions_pass();
         self.movement_pass();
-        self.temperature_pass();
+        self.temperature_pass(parallel);
         self.life_pass();
         self.frame_parity = !self.frame_parity;
     }
@@ -402,12 +420,19 @@ impl Grid {
         self.touch(x, y);
     }
 
-    /// Heat diffusion (explicit, 4-neighbour, insulated boundary) + temperature
-    /// driven phase transitions, over awake chunks only. A cell whose temperature
-    /// changed meaningfully — or that transformed — keeps its chunk awake; once a
-    /// region is thermally uniform it stops waking and sleeps.
-    fn temperature_pass(&mut self) {
+    /// Heat diffusion + temperature-driven phase transitions over awake chunks.
+    /// The diffusion stencil is a **Jacobi** pass — reads the old field, writes
+    /// the scratch `temp_next` — so it is order-independent and can be run in
+    /// parallel (`parallel = true`) with a result identical to serial. The
+    /// commit (wake-on-change + transitions) is serial and cheap, keeping the
+    /// `transients` count and wake set race-free.
+    fn temperature_pass(&mut self, parallel: bool) {
         const EPS: f32 = 0.05;
+        self.diffuse(parallel);
+
+        // Serial commit over awake chunks: copy the new temperatures in, wake
+        // chunks whose temperature moved, and apply phase transitions. Only awake
+        // cells were diffused, so we touch nothing in sleeping regions (O(awake)).
         for cy in 0..self.chunks_y {
             for cx in 0..self.chunks_x {
                 if !self.active[self.chunk_idx(cx, cy)] {
@@ -420,30 +445,76 @@ impl Grid {
                 for y in y0..y1 {
                     for x in x0..x1 {
                         let i = self.idx(x, y);
-                        let here = self.temp[i];
-                        // Insulated boundary: OOB neighbour contributes `here`
-                        // (zero flux), so edges neither gain nor lose heat.
-                        let mut sum = 0.0f32;
-                        sum += if x > 0 { self.temp[i - 1] } else { here };
-                        sum += if x + 1 < self.width { self.temp[i + 1] } else { here };
-                        sum += if y > 0 { self.temp[i - self.width] } else { here };
-                        sum += if y + 1 < self.height {
-                            self.temp[i + self.width]
-                        } else {
-                            here
-                        };
-                        let rate = material::props(self.cells[i].material).conductivity;
-                        let next = here + rate * (sum * 0.25 - here);
-                        self.temp[i] = next;
-
-                        let changed = (next - here).abs() > EPS;
-                        let transitioned = self.try_transition(x, y, next);
+                        let new = self.temp_next[i];
+                        let changed = (new - self.temp[i]).abs() > EPS;
+                        self.temp[i] = new;
+                        let transitioned = self.try_transition(x, y, new);
                         if changed || transitioned {
                             self.touch(x, y);
                         }
                     }
                 }
             }
+        }
+    }
+
+    /// Compute the next temperature for every **awake** cell into `temp_next`
+    /// (4-neighbour insulated-boundary Jacobi stencil, reading the old field).
+    /// Parallelized over awake chunks with rayon: chunks tile the grid, so each
+    /// task writes a disjoint set of `temp_next` indices — race-free. The single
+    /// `unsafe` is justified by that tiling (no two chunks share a cell).
+    fn diffuse(&mut self, parallel: bool) {
+        let Grid {
+            ref temp,
+            ref cells,
+            ref active,
+            ref mut temp_next,
+            width: w,
+            height: h,
+            chunks_x,
+            chunks_y,
+            ..
+        } = *self;
+
+        let awake: Vec<(usize, usize)> = (0..chunks_y)
+            .flat_map(|cy| (0..chunks_x).map(move |cx| (cx, cy)))
+            .filter(|&(cx, cy)| active[cy * chunks_x + cx])
+            .collect();
+
+        /// Pointer to `temp_next`, marked shareable because each chunk writes a
+        /// disjoint index range.
+        struct Out(*mut f32);
+        unsafe impl Sync for Out {}
+        let out = Out(temp_next.as_mut_ptr());
+
+        let process = |&(cx, cy): &(usize, usize)| {
+            let out = &out; // capture by ref
+            let x0 = cx * CHUNK;
+            let y0 = cy * CHUNK;
+            let x1 = (x0 + CHUNK).min(w);
+            let y1 = (y0 + CHUNK).min(h);
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let i = y * w + x;
+                    let here = temp[i];
+                    // Insulated boundary: OOB neighbour contributes `here`.
+                    let mut sum = 0.0f32;
+                    sum += if x > 0 { temp[i - 1] } else { here };
+                    sum += if x + 1 < w { temp[i + 1] } else { here };
+                    sum += if y > 0 { temp[i - w] } else { here };
+                    sum += if y + 1 < h { temp[i + w] } else { here };
+                    let rate = material::props(cells[i].material).conductivity;
+                    // SAFETY: `i` lies in chunk (cx,cy); chunks are disjoint, so
+                    // no other task writes this index concurrently.
+                    unsafe { *out.0.add(i) = here + rate * (sum * 0.25 - here) };
+                }
+            }
+        };
+
+        if parallel {
+            awake.par_iter().for_each(process);
+        } else {
+            awake.iter().for_each(process);
         }
     }
 
@@ -1519,6 +1590,41 @@ mod tests {
         let mut ok = Grid::new(4, 4, 1).serialize();
         ok.truncate(ok.len() - 3); // corrupt/truncate
         assert!(Grid::deserialize(&ok).is_none());
+    }
+
+    // --- M9 threading determinism ---
+
+    #[test]
+    fn parallel_step_matches_serial_bit_for_bit() {
+        // A thermally-busy scene (lava, water, fire) exercises the parallel
+        // diffusion path. step_parallel must equal step every tick, and the
+        // temperature field must match exactly too.
+        let mut a = Grid::new(160, 160, 0x1234);
+        let mut b = Grid::new(160, 160, 0x1234);
+        for g in [&mut a, &mut b] {
+            for x in 20..140 {
+                g.set(x, 150, STONE);
+            }
+            g.paint(80, 120, 14, LAVA);
+            g.paint(80, 40, 16, WATER);
+            g.set(40, 60, FIRE);
+            g.paint(110, 30, 4, OIL);
+        }
+        for tick in 0..300 {
+            a.step();
+            b.step_parallel();
+            assert_eq!(a.hash(), b.hash(), "cell hash diverged at tick {tick}");
+            assert_eq!(
+                a.cells(),
+                b.cells(),
+                "cells diverged at tick {tick}"
+            );
+            // temperature field identical too
+            for i in 0..a.cells().len() {
+                let (ta, tb) = (a.temp[i], b.temp[i]);
+                assert_eq!(ta.to_bits(), tb.to_bits(), "temp diverged at tick {tick}");
+            }
+        }
     }
 
     #[test]

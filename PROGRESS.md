@@ -15,7 +15,7 @@ Living log of decisions, roster, test status, perf numbers. One section per mile
 | M6 Reactions & energy | ✅ done | 35 unit + proptest |
 | M7 Full roster | ✅ done | 40 unit + 2 proptest |
 | M8 App polish | ✅ done | 42 unit + 2 proptest |
-| M9 Threading | ⏳ | |
+| M9 Threading | ✅ done | 43 unit + 2 proptest |
 
 ---
 
@@ -254,3 +254,41 @@ ticks never panic / never corrupt ids.
 
 **Tests (42 unit + 2 proptest):** added serialize round-trip (state + identical future
 evolution) and deserialize-rejects-garbage; all prior green.
+
+---
+
+## M9 — Threading ✅
+
+**Decisions**
+- `pwdr-core` gains **rayon** (a compute dep — still zero graphics deps; verified via
+  `cargo tree`). New `Grid::step_parallel()` alongside the serial `Grid::step()`.
+- The **heat-diffusion stencil** is parallelized **over awake chunks** with rayon. It is a
+  pure **Jacobi** pass (reads the old field, writes the `temp_next` scratch); chunks tile
+  the grid so each task writes a disjoint index range — one contained, documented `unsafe`
+  (a `Sync` pointer wrapper) justified by that tiling. Boundary handling is explicit:
+  insulated edges (OOB neighbour = self), neighbour reads from the old field.
+- **Determinism is the strongest possible:** the parallel tick is **byte-identical to the
+  serial tick** (Jacobi is order-independent), proven by
+  `parallel_step_matches_serial_bit_for_bit` (cells + temperature field, 300 ticks on a
+  lava/water/fire scene). Movement and reactions stay single-threaded so the seeded RNG is
+  consumed in a fixed order — **all earlier golden/behavioral/proptest tests stay green
+  and unchanged.**
+
+**Tests (43 unit + 2 proptest):** all prior + parallel↔serial bit-for-bit equivalence.
+
+**Perf (see README, indicative on a shared 22-core box):** hard floors met — 256² fully
+active and 512² sparse @ 60 fps single-threaded, with headroom. Parallel diffusion gives a
+real speedup on the diffusion-bound 1024² case (~44 ms → ~37 ms). The **1024² fully-active
+@ 60 fps stretch is not reached**: serial movement dominates at that scale and is
+intentionally left serial to preserve strict determinism. Documented next step:
+deterministic parallel movement via chunk-coloring + per-chunk RNG.
+
+---
+
+## Final status
+
+All milestones M0–M9 green. `cargo test -p pwdr-core`: **43 unit + 2 proptest (incl.
+behavioral, determinism-golden, and property invariants)** pass. `pwdr-core` compiles with
+zero graphics dependencies (rayon only). `cargo bench` baselines recorded in the README.
+The macroquad app builds and runs the full self-designed 20-element roster with a
+categorized + searchable palette, pause/step, readouts, and deterministic save/load.
