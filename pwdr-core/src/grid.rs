@@ -891,11 +891,21 @@ impl Grid {
         Some(g)
     }
 
-    /// Render a temperature heat-map into RGBA8: blue (cold) → dark (ambient) →
-    /// red → yellow → white (very hot). Lets the UI visualize the heat field.
+    /// Render the scene with each cell **recolored by its temperature** (blue
+    /// cold → red/orange/white hot). Empty space stays black so element shapes
+    /// remain visible — this is a thermal recolor of matter, not a blurry field.
     pub fn render_temperature_rgba(&mut self) -> &[u8] {
-        for (t, px) in self.temp.iter().zip(self.framebuffer.chunks_exact_mut(4)) {
-            let c = temp_color(*t);
+        for ((cell, t), px) in self
+            .cells
+            .iter()
+            .zip(self.temp.iter())
+            .zip(self.framebuffer.chunks_exact_mut(4))
+        {
+            let c = if cell.material == EMPTY {
+                [0, 0, 0]
+            } else {
+                temp_color(*t)
+            };
             px[0] = c[0];
             px[1] = c[1];
             px[2] = c[2];
@@ -918,20 +928,26 @@ impl Grid {
     }
 }
 
-/// Map a temperature (°C-like) to a heat-map RGB. Cold→blue, ambient(~20)→dark,
-/// then red→yellow→white as it heats. Used by the temperature overlay.
+/// Map a temperature (°C-like) to an RGB used to recolor matter: ambient (~20)
+/// is neutral grey, colder shifts toward blue, hotter ramps red→yellow→white.
 pub fn temp_color(t: f32) -> [u8; 3] {
+    let lerp = |a: f32, b: f32, f: f32| (a + (b - a) * f.clamp(0.0, 1.0)) as u8;
     if t <= 20.0 {
-        // -60..20 : bright blue → near-black
-        let f = ((t + 60.0) / 80.0).clamp(0.0, 1.0); // 0 cold .. 1 ambient
-        [0, (30.0 * f) as u8, (255.0 * (1.0 - f)).max(20.0) as u8]
+        // 20 (grey) .. -200 (deep blue)
+        let f = (20.0 - t) / 220.0;
+        [lerp(140.0, 30.0, f), lerp(140.0, 110.0, f), lerp(150.0, 255.0, f)]
     } else {
-        // 20..1000 : dark red → red → yellow → white
-        let f = ((t - 20.0) / 980.0).clamp(0.0, 1.0);
-        let r = (80.0 + 175.0 * (f / 0.4).min(1.0)) as u8;
-        let g = (255.0 * ((f - 0.25) / 0.45).clamp(0.0, 1.0)) as u8;
-        let b = (255.0 * ((f - 0.7) / 0.3).clamp(0.0, 1.0)) as u8;
-        [r, g, b]
+        let f = ((t - 20.0) / 1180.0).clamp(0.0, 1.0); // 20..1200
+        if f < 0.4 {
+            let g = f / 0.4; // grey -> red
+            [lerp(140.0, 230.0, g), lerp(140.0, 40.0, g), lerp(150.0, 30.0, g)]
+        } else if f < 0.75 {
+            let g = (f - 0.4) / 0.35; // red -> orange/yellow
+            [lerp(230.0, 255.0, g), lerp(40.0, 200.0, g), lerp(30.0, 40.0, g)]
+        } else {
+            let g = (f - 0.75) / 0.25; // yellow -> white
+            [255, lerp(200.0, 255.0, g), lerp(40.0, 255.0, g)]
+        }
     }
 }
 
@@ -1309,7 +1325,7 @@ mod tests {
 
     #[test]
     fn steam_condenses_to_water() {
-        let (mut g, x, y) = boxed(STEAM, 50.0);
+        let (mut g, x, y) = boxed(STEAM, 30.0);
         g.step();
         assert_eq!(g.material_at(x, y), WATER, "cool steam -> water");
     }
@@ -1592,6 +1608,49 @@ mod tests {
             g.step();
         }
         assert!(g.count(WOOD) < wood0, "wood burned (at least partially)");
+    }
+
+    #[test]
+    fn plasma_heats_then_leaves_no_trace() {
+        use crate::material::PLASMA;
+        let mut g = Grid::new(5, 5, 1);
+        for y in 0..5 {
+            for x in 0..5 {
+                g.set(x, y, STONE);
+            }
+        }
+        g.set(2, 1, WATER);
+        g.set(2, 2, PLASMA); // plasma below the water
+        let mut saw_steam = false;
+        for _ in 0..120 {
+            g.step();
+            if g.count(STEAM) > 0 {
+                saw_steam = true;
+            }
+        }
+        assert!(saw_steam, "plasma boiled the water to steam");
+        assert_eq!(g.count(PLASMA), 0, "plasma left no trace");
+    }
+
+    #[test]
+    fn frost_cools_then_leaves_no_trace() {
+        use crate::material::FROST;
+        let mut g = Grid::new(5, 5, 1);
+        for y in 0..5 {
+            for x in 0..5 {
+                g.set(x, y, WATER);
+            }
+        }
+        g.set(2, 2, FROST);
+        let mut saw_ice = false;
+        for _ in 0..120 {
+            g.step();
+            if g.count(ICE) > 0 {
+                saw_ice = true;
+            }
+        }
+        assert!(saw_ice, "frost froze nearby water to ice");
+        assert_eq!(g.count(FROST), 0, "frost left no trace");
     }
 
     #[test]

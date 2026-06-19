@@ -70,6 +70,8 @@ pub const CRYO: MaterialId = 17;
 pub const WOOD: MaterialId = 18;
 pub const GLASS: MaterialId = 19;
 pub const COOLED: MaterialId = 20;
+pub const PLASMA: MaterialId = 21;
+pub const FROST: MaterialId = 22;
 
 const NEVER_HOT: f32 = f32::INFINITY;
 const NEVER_COLD: f32 = f32::NEG_INFINITY;
@@ -195,13 +197,15 @@ pub static MATERIALS: &[MaterialProps] = &[
         color: [200, 200, 210],
         color_jitter: 14,
         dispersion: 6,
-        life: 0,
-        decay_to: EMPTY,
-        default_temp: 110.0,
-        conductivity: 0.05,
+        // Holds heat (low conductivity) so it rises a long way; condenses when it
+        // finally cools, with a long life as a fallback so it never accumulates.
+        life: 220,
+        decay_to: WATER,
+        default_temp: 120.0,
+        conductivity: 0.02,
         high_temp: NEVER_HOT,
         high_to: EMPTY,
-        low_temp: 99.0,
+        low_temp: 45.0,
         low_to: WATER, // condense
     },
     MaterialProps {
@@ -246,7 +250,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         life: 0,
         decay_to: EMPTY,
         default_temp: 20.0,
-        conductivity: 0.22, // good thermal + electrical conductor
+        conductivity: 0.25,
         high_temp: NEVER_HOT,
         high_to: EMPTY,
         low_temp: NEVER_COLD,
@@ -283,7 +287,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         life: 2,
         decay_to: COOLED,
         default_temp: 20.0,
-        conductivity: 0.22,
+        conductivity: 0.25,
         high_temp: NEVER_HOT,
         high_to: EMPTY,
         low_temp: NEVER_COLD,
@@ -411,7 +415,39 @@ pub static MATERIALS: &[MaterialProps] = &[
         life: 3,
         decay_to: COPPER,
         default_temp: 20.0,
-        conductivity: 0.22,
+        conductivity: 0.25,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Plasma",
+        phase: Phase::Energy, // a heat tool: dumps heat into neighbours, then vanishes
+        density: 0,
+        color: [235, 120, 255],
+        color_jitter: 30,
+        dispersion: 0,
+        life: 25,
+        decay_to: EMPTY, // leaves no trace
+        default_temp: 4000.0,
+        conductivity: 0.25, // sheds its heat fast
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Frost",
+        phase: Phase::Energy, // a cold tool: drains heat from neighbours, then vanishes
+        density: 0,
+        color: [190, 240, 255],
+        color_jitter: 20,
+        dispersion: 0,
+        life: 25,
+        decay_to: EMPTY, // leaves no trace
+        default_temp: -1000.0,
+        conductivity: 0.25,
         high_temp: NEVER_HOT,
         high_to: EMPTY,
         low_temp: NEVER_COLD,
