@@ -64,7 +64,7 @@ const TICK_DT: f64 = 1.0 / 60.0;
 
 fn window_conf() -> Conf {
     Conf {
-        window_title: "rust-cells".to_owned(),
+        window_title: format!("rust-cells v{}", env!("CARGO_PKG_VERSION")),
         // Default canvas: 400 wide x 250 tall cells (plus the side panel).
         window_width: (400.0 * SCALE + PANEL_W) as i32,
         window_height: (250.0 * SCALE + BAR_H) as i32,
@@ -666,7 +666,7 @@ fn draw_palette(
     };
     draw_rectangle_lines(x0 + 12.0, 60.0, PANEL_W - 24.0, 26.0, 1.0, border);
     if search.is_empty() {
-        draw_text("search…", x0 + 18.0, 78.0, 16.0, c_muted());
+        draw_text("type to search", x0 + 18.0, 78.0, 16.0, c_muted());
     } else {
         draw_text(search, x0 + 18.0, 78.0, 16.0, c_text());
     }
@@ -778,7 +778,8 @@ fn draw_hud(
         c_muted(),
     );
     if !status.is_empty() {
-        draw_text(status, sim_w - 230.0, sim_h + 17.0, 15.0, col(150, 210, 150));
+        let sx = sim_w - 230.0;
+        draw_text(status, sx, sim_h + 17.0, 15.0, col(150, 210, 150));
     }
 }
 

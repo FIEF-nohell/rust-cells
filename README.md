@@ -61,10 +61,10 @@ to life.
 
 | Phase | Elements |
 |-------|----------|
-| Powders | Sand, Gunpowder, Salt, Thermite, Snow, Ash |
+| Powders | Sand, Gunpowder, Salt, Thermite, Snow, Ash, Soil, Ember |
 | Liquids | Water, Oil (floats), Saltwater (brine), Lava, Acid, Nitro, Mercury, Molten Wax |
 | Gases | Smoke, Steam, Fire, Fume, Hydrogen, Oxygen, Plasma, Frost |
-| Solids | Stone, Ice, Basalt, Obsidian, Glass, Wood, Plant, Conductor, Cryo, Wax, Coal, TNT, Battery, Lamp, Fuse, Heater, Cooler, Clone, Void |
+| Solids | Stone, Ice, Basalt, Obsidian, Glass, Diamond, Wood, Plant, Conductor, Cryo, Wax, Coal, TNT, Battery, Lamp, Fuse, Heater, Cooler, Clone, Void |
 
 Some interactions that fall out of the data-driven rules:
 

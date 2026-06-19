@@ -96,6 +96,9 @@ pub const BURNFUSE: MaterialId = 43;
 pub const SNOW: MaterialId = 44;
 pub const ASH: MaterialId = 45;
 pub const OXYGEN: MaterialId = 46;
+pub const SOIL: MaterialId = 47;
+pub const EMBER: MaterialId = 48;
+pub const DIAMOND: MaterialId = 49;
 
 const NEVER_HOT: f32 = f32::INFINITY;
 const NEVER_COLD: f32 = f32::NEG_INFINITY;
@@ -865,6 +868,54 @@ pub static MATERIALS: &[MaterialProps] = &[
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
+    MaterialProps {
+        name: "Soil",
+        phase: Phase::Powder, // plant grows through it
+        density: 1500,
+        color: [110, 76, 46],
+        color_jitter: 16,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.06,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Ember",
+        phase: Phase::Powder, // glowing hot coal; ignites things, fades to ash
+        density: 900,
+        color: [232, 96, 32],
+        color_jitter: 30,
+        dispersion: 0,
+        life: 120,
+        decay_to: ASH,
+        default_temp: 600.0,
+        conductivity: 0.10,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Diamond",
+        phase: Phase::Solid, // indestructible: fireproof, acid-proof, blast-proof
+        density: 9000,
+        color: [180, 235, 242],
+        color_jitter: 6,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.10,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
 ];
 
 /// Fixed temperature a persistent source holds, if any (Heater/Cooler).
@@ -1261,6 +1312,40 @@ pub static REACTIONS: &[Reaction] = &[
         a_to: OBSIDIAN,
         b_to: STEAM,
         prob: 0.25,
+        min_temp: NEVER_COLD,
+    },
+    // Plant roots spread through soil.
+    Reaction {
+        a: PLANT,
+        b: SOIL,
+        a_to: PLANT,
+        b_to: PLANT,
+        prob: 0.05,
+        min_temp: NEVER_COLD,
+    },
+    // Embers set fire to what they touch.
+    Reaction {
+        a: EMBER,
+        b: OIL,
+        a_to: EMBER,
+        b_to: FIRE,
+        prob: 0.5,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: EMBER,
+        b: WOOD,
+        a_to: EMBER,
+        b_to: FIRE,
+        prob: 0.2,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: EMBER,
+        b: FUME,
+        a_to: EMBER,
+        b_to: FIRE,
+        prob: 0.6,
         min_temp: NEVER_COLD,
     },
 ];

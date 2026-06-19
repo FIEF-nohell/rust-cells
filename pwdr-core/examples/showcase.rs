@@ -265,4 +265,11 @@ fn decor(g: &mut Grid) {
         vline(g, px, 240, 250, WOOD);
         put(g, px, 238, FIRE);
     }
+    // a bed of soil with the plant rooted in it
+    rect(g, tx - 7, ty + 1, tx + 7, ty + 4, SOIL);
+    // glowing embers in a little fire pit on the beach
+    disc(g, 300, 246, 3, EMBER);
+    // diamond gems embedded deep underground
+    disc(g, 470, 338, 3, DIAMOND);
+    disc(g, 130, 344, 2, DIAMOND);
 }

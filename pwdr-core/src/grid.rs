@@ -357,6 +357,7 @@ impl Grid {
                                     || m == material::CHARGED
                                     || m == material::LAVA
                                     || m == material::BURNFUSE
+                                    || m == material::EMBER
                             };
                             let ra = material::explosive_radius(a);
                             let rb = material::explosive_radius(b);
@@ -477,7 +478,7 @@ impl Grid {
                     }
                     let (x, y) = (x as usize, y as usize);
                     let m = self.material_at(x, y);
-                    if m == material::STONE {
+                    if m == material::STONE || m == material::DIAMOND {
                         continue; // blast-proof
                     }
                     let chain = material::explosive_radius(m);
@@ -1186,7 +1187,7 @@ mod tests {
         LAVA, OIL, PLANT, SALT, SALTWATER, SAND, SMOKE, SPARK, STEAM, STONE, THERMITE, VOID, WATER,
         WOOD,
     };
-    use crate::material::{ASH, OXYGEN, SNOW};
+    use crate::material::{ASH, DIAMOND, EMBER, OXYGEN, SNOW, SOIL};
     use crate::material::{
         BATTERY, COAL, COOLER, FUSE, HEATER, HYDROGEN, LAMP, LITLAMP, MELTWAX, MERCURY, NITRO,
         OBSIDIAN, WAX,
@@ -2449,6 +2450,68 @@ mod tests {
             }
         }
         assert!(saw_ash, "a burning fuse leaves an ash trail");
+    }
+
+    #[test]
+    fn diamond_is_indestructible() {
+        let mut g = Grid::new(9, 9, 1);
+        for x in 0..9 {
+            g.set(x, 8, STONE); // floor
+        }
+        g.set(4, 7, DIAMOND);
+        g.set(4, 6, ACID); // acid resting on it
+        g.set(3, 7, GUNPOWDER);
+        g.set(2, 7, FIRE); // a blast right next to it
+        g.set_temperature(4, 7, 4000.0); // extreme heat
+        for _ in 0..80 {
+            g.step();
+        }
+        assert_eq!(
+            g.material_at(4, 7),
+            DIAMOND,
+            "diamond survives heat, acid, and explosions"
+        );
+    }
+
+    #[test]
+    fn ember_ignites_fuel() {
+        let mut g = Grid::new(5, 5, 1);
+        for x in 0..5 {
+            g.set(x, 4, STONE);
+        }
+        g.set(2, 3, EMBER);
+        g.set(3, 3, OIL);
+        let mut saw_fire = false;
+        for _ in 0..30 {
+            g.step();
+            if g.count(FIRE) > 0 {
+                saw_fire = true;
+                break;
+            }
+        }
+        assert!(saw_fire, "an ember set the oil alight");
+    }
+
+    #[test]
+    fn plant_spreads_through_soil() {
+        let mut g = Grid::new(8, 8, 1);
+        for y in 0..8 {
+            for x in 0..8 {
+                if x == 0 || y == 0 || x == 7 || y == 7 {
+                    g.set(x, y, STONE);
+                }
+            }
+        }
+        for y in 1..7 {
+            for x in 1..7 {
+                g.set(x, y, SOIL);
+            }
+        }
+        g.set(4, 4, PLANT);
+        for _ in 0..400 {
+            g.step();
+        }
+        assert!(g.count(PLANT) > 1, "plant rooted through the soil");
     }
 
     #[test]
