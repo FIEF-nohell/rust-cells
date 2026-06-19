@@ -535,8 +535,10 @@ impl Grid {
                     // of dumping into the surrounding air. Insulated boundary:
                     // out-of-grid neighbours carry zero flux.
                     let mut flux = 0.0f32;
+                    let mut ksum = 0.0f32;
                     let mut edge = |j: usize| {
                         let k = ci.min(material::props(cells[j].material).conductivity);
+                        ksum += k;
                         flux += k * (temp[j] - here);
                     };
                     if x > 0 {
@@ -551,14 +553,21 @@ impl Grid {
                     if y + 1 < h {
                         edge(i + w);
                     }
+                    // Stability clamp: explicit diffusion needs the total edge
+                    // weight <= 1. This lets a material use a high conductivity
+                    // (fast conduction through thin structures like a wire, which
+                    // has few same-material edges) while a solid block of it stays
+                    // stable (its 4 edges scale down to sum 1).
+                    if ksum > 1.0 {
+                        flux /= ksum;
+                    }
                     let mut next = here + flux;
-                    // Empty air is a weak ambient sink: it slowly relaxes to 20.
-                    // Safe now that air only exchanges with matter at air's own
-                    // low conductivity (per-edge min), so this no longer drains
-                    // conductors — it just keeps stray air heat/cold from lingering.
+                    // Empty air is a weak ambient sink: it slowly relaxes to 20 so
+                    // stray air heat/cold doesn't linger. Gentle, so conductors
+                    // keep their heat (they barely couple to air anyway).
                     if cells[i].material == EMPTY {
                         const AMBIENT: f32 = 20.0;
-                        const AIR_RELAX: f32 = 0.05;
+                        const AIR_RELAX: f32 = 0.01;
                         next += AIR_RELAX * (AMBIENT - next);
                     }
                     // SAFETY: `i` lies in chunk (cx,cy); chunks are disjoint, so

@@ -88,7 +88,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         life: 0,
         decay_to: EMPTY,
         default_temp: 20.0,
-        conductivity: 0.03, // air: slow
+        conductivity: 0.006, // air: near-insulating, so conductors keep + carry heat far
         high_temp: NEVER_HOT,
         high_to: EMPTY,
         low_temp: NEVER_COLD,
@@ -250,7 +250,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         life: 0,
         decay_to: EMPTY,
         default_temp: 20.0,
-        conductivity: 0.25,
+        conductivity: 0.50,
         high_temp: NEVER_HOT,
         high_to: EMPTY,
         low_temp: NEVER_COLD,
@@ -287,7 +287,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         life: 2,
         decay_to: COOLED,
         default_temp: 20.0,
-        conductivity: 0.25,
+        conductivity: 0.50,
         high_temp: NEVER_HOT,
         high_to: EMPTY,
         low_temp: NEVER_COLD,
@@ -415,7 +415,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         life: 3,
         decay_to: COPPER,
         default_temp: 20.0,
-        conductivity: 0.25,
+        conductivity: 0.50,
         high_temp: NEVER_HOT,
         high_to: EMPTY,
         low_temp: NEVER_COLD,
@@ -431,7 +431,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         life: 25,
         decay_to: EMPTY, // leaves no trace
         default_temp: 4000.0,
-        conductivity: 0.25, // sheds its heat fast
+        conductivity: 0.50, // sheds its heat fast
         high_temp: NEVER_HOT,
         high_to: EMPTY,
         low_temp: NEVER_COLD,
@@ -447,7 +447,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         life: 25,
         decay_to: EMPTY, // leaves no trace
         default_temp: -1000.0,
-        conductivity: 0.25,
+        conductivity: 0.50,
         high_temp: NEVER_HOT,
         high_to: EMPTY,
         low_temp: NEVER_COLD,
@@ -556,8 +556,10 @@ mod tests {
     }
 
     #[test]
-    fn conductivities_are_stable() {
-        // Explicit diffusion with 4 neighbours is stable for rate <= 0.25.
-        assert!(MATERIALS.iter().all(|m| m.conductivity <= 0.25));
+    fn conductivities_in_range() {
+        // The diffusion pass clamps the per-cell total edge weight to <= 1, so any
+        // conductivity in [0, 1] is stable. Conductors use up to ~0.5 (fast
+        // conduction through thin structures); insulators stay low.
+        assert!(MATERIALS.iter().all(|m| m.conductivity >= 0.0 && m.conductivity <= 1.0));
     }
 }
