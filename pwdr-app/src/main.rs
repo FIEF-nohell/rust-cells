@@ -2,6 +2,7 @@
 //! Holds as little logic as possible; all simulation lives in `pwdr-core`.
 
 use macroquad::prelude::*;
+use pwdr_core::material::{EMPTY, SAND};
 use pwdr_core::Grid;
 
 const GRID_W: usize = 256;
@@ -30,8 +31,24 @@ async fn main() {
     texture.set_filter(FilterMode::Nearest);
 
     let mut acc = 0.0f64;
+    let brush = 3usize;
 
     loop {
+        // Brush: left paints sand, right erases. Map screen -> grid coords.
+        if is_mouse_button_down(MouseButton::Left) || is_mouse_button_down(MouseButton::Right) {
+            let (mx, my) = mouse_position();
+            let gx = (mx / screen_width() * GRID_W as f32) as i32;
+            let gy = (my / screen_height() * GRID_H as f32) as i32;
+            if gx >= 0 && gy >= 0 && (gx as usize) < GRID_W && (gy as usize) < GRID_H {
+                let mat = if is_mouse_button_down(MouseButton::Right) {
+                    EMPTY
+                } else {
+                    SAND
+                };
+                grid.paint(gx as usize, gy as usize, brush, mat);
+            }
+        }
+
         // Fixed-timestep sim, decoupled from render.
         acc += get_frame_time() as f64;
         while acc >= TICK_DT {

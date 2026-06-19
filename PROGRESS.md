@@ -7,7 +7,7 @@ Living log of decisions, roster, test status, perf numbers. One section per mile
 | Milestone | State | Tests |
 |-----------|-------|-------|
 | M0 Workspace & harness | ✅ done | 7 green |
-| M1 Grid + first powder | ⏳ | |
+| M1 Grid + first powder | ✅ done | 11 green |
 | M2 Chunks & dirty rects | ⏳ | |
 | M3 Liquids | ⏳ | |
 | M4 Gases | ⏳ | |
@@ -34,3 +34,28 @@ Living log of decisions, roster, test status, perf numbers. One section per mile
 framebuffer size+opacity; deterministic step.
 
 **Perf:** baselines deferred to M2 per doc (criterion harness compiles + runs now).
+
+---
+
+## M1 — Grid + first powder ✅
+
+**Decisions**
+- `Cell` = 4 bytes: `material: u8`, `gen: u8` (moved-this-tick tag), `life: u8`
+  (transients, M6+), `tint: u8` (per-cell color jitter seed). Flat `Vec<Cell>`,
+  index `y*w+x`.
+- Moved flag = generation tag cycling `1..=255`, `0` = untouched sentinel; on wrap
+  we clear all tags (amortized O(N)/255 ticks) — no false "moved" collisions, cheap.
+- Movement: **bottom-up** row scan so a cell falls exactly one row/tick; **horizontal
+  scan direction alternates** each frame (anti-bias). Powder: down, else a randomized
+  down-diagonal.
+- **Generalized density swap** (`displaces()`) lives from day one: into empty always;
+  through a lighter Liquid/Gas iff mover denser. One rule, no per-pair hacks — ready
+  for sand-through-water, oil-on-water, gas-rising in later milestones.
+- Data-driven `MATERIALS` table; M1 roster = Empty, Stone (static solid), Sand (inert
+  heavy powder). Adding an element = adding a table row.
+- Render in core → flat RGBA8 with per-cell brightness jitter from `tint`.
+
+**Tests (11 green):** falls one row/tick; rests on floor; rests on a solid row;
+pile conserved + near-symmetric (fixed seed); cell ≤ 8 bytes; material table; RNG suite.
+
+**App:** left-drag paints sand, right-drag erases.
