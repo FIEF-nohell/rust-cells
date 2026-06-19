@@ -261,10 +261,84 @@ impl Grid {
     /// Advance one fixed tick.
     pub fn step(&mut self) {
         self.begin_tick();
+        self.reactions_pass();
         self.movement_pass();
         self.temperature_pass();
         self.life_pass();
         self.frame_parity = !self.frame_parity;
+    }
+
+    /// Data-driven contact reactions over awake chunks. A cell reacts with at
+    /// most one neighbour per tick; both endpoints are then tagged (so they
+    /// neither move nor react again this tick) and their chunks woken. Reactions
+    /// run before movement, so a reacting cell stays put that tick.
+    fn reactions_pass(&mut self) {
+        const NEIGHBOURS: [(isize, isize); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
+        for cy in 0..self.chunks_y {
+            for cx in 0..self.chunks_x {
+                if !self.active[self.chunk_idx(cx, cy)] {
+                    continue;
+                }
+                let x0 = cx * CHUNK;
+                let y0 = cy * CHUNK;
+                let x1 = (x0 + CHUNK).min(self.width);
+                let y1 = (y0 + CHUNK).min(self.height);
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let i = self.idx(x, y);
+                        let a = self.cells[i].material;
+                        if a == EMPTY || self.cells[i].gen == self.gen {
+                            continue;
+                        }
+                        for (dx, dy) in NEIGHBOURS {
+                            let nx = x as isize + dx;
+                            let ny = y as isize + dy;
+                            if !self.in_bounds(nx, ny) {
+                                continue;
+                            }
+                            let (nx, ny) = (nx as usize, ny as usize);
+                            let nidx = self.idx(nx, ny);
+                            if self.cells[nidx].gen == self.gen {
+                                continue; // neighbour already reacted/moved
+                            }
+                            let b = self.cells[nidx].material;
+                            if let Some(r) = material::reaction_for(a, b) {
+                                if self.temp[i] >= r.min_temp && self.rng.chance(r.prob) {
+                                    self.transform(x, y, r.a_to);
+                                    self.transform(nx, ny, r.b_to);
+                                    self.touch(x, y);
+                                    self.touch(nx, ny);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Change cell (x,y) to material `to`, keeping bookkeeping consistent:
+    /// transient count, life reset, gen tag, and temperature (a hot product
+    /// raises the cell's temperature so reactions/transitions can cascade).
+    fn transform(&mut self, x: usize, y: usize, to: MaterialId) {
+        let i = self.idx(x, y);
+        if self.cells[i].life > 0 {
+            self.transients -= 1;
+        }
+        let new_life = material::props(to).life;
+        if new_life > 0 {
+            self.transients += 1;
+        }
+        self.cells[i].material = to;
+        self.cells[i].life = new_life;
+        self.cells[i].gen = self.gen;
+        if to != EMPTY {
+            let dt = material::props(to).default_temp;
+            if dt > self.temp[i] {
+                self.temp[i] = dt;
+            }
+        }
     }
 
     /// Read a cell's temperature (test/HUD helper).
@@ -643,7 +717,10 @@ pub fn can_move_into(mover: MaterialId, target: MaterialId, dy: isize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::material::{BASALT, ICE, LAVA, OIL, SAND, SMOKE, STEAM, STONE, WATER};
+    use crate::material::{
+        ACID, BASALT, CHARGED, COPPER, FIRE, ICE, LAVA, OIL, SAND, SMOKE, SPARK, STEAM, STONE,
+        WATER,
+    };
 
     #[test]
     fn cell_is_small() {
@@ -1038,6 +1115,129 @@ mod tests {
         }
         assert!(g.count(BASALT) > 0, "lava solidified to basalt on contact");
         assert!(g.count(STEAM) > 0, "water flashed to steam");
+    }
+
+    // --- M6 reaction / energy tests ---
+
+    #[test]
+    fn fire_consumes_oil_and_emits_smoke() {
+        // A sealed box of oil, ignited in the middle, burns out to smoke.
+        let mut g = Grid::new(12, 12, 4);
+        for y in 0..12 {
+            for x in 0..12 {
+                if x == 0 || y == 0 || x == 11 || y == 11 {
+                    g.set(x, y, STONE);
+                }
+            }
+        }
+        for y in 1..11 {
+            for x in 1..11 {
+                g.set(x, y, OIL);
+            }
+        }
+        let oil0 = g.count(OIL);
+        g.set(6, 6, FIRE);
+        let mut saw_smoke = false;
+        for _ in 0..400 {
+            g.step();
+            if g.count(SMOKE) > 0 {
+                saw_smoke = true;
+            }
+        }
+        assert!(g.count(OIL) < oil0 / 4, "most oil burned: {}", g.count(OIL));
+        assert!(saw_smoke, "combustion emitted smoke (byproduct) during the burn");
+    }
+
+    #[test]
+    fn fire_is_quenched_by_water() {
+        // Sealed box with an interior fire/water pair.
+        let mut g = Grid::new(4, 4, 1);
+        for y in 0..4 {
+            for x in 0..4 {
+                if x == 0 || y == 0 || x == 3 || y == 3 {
+                    g.set(x, y, STONE);
+                }
+            }
+        }
+        g.set(1, 2, FIRE);
+        g.set(1, 1, WATER);
+        let mut saw_steam = false;
+        for _ in 0..60 {
+            g.step();
+            if g.count(STEAM) > 0 {
+                saw_steam = true;
+            }
+        }
+        assert!(saw_steam, "fire + water produced steam");
+        assert_eq!(g.count(FIRE), 0, "fire was quenched");
+    }
+
+    #[test]
+    fn acid_dissolves_solid_and_is_consumed() {
+        // Acid poured onto a sand pile: both are consumed over time.
+        let mut g = Grid::new(5, 12, 7);
+        for x in 0..5 {
+            g.set(x, 11, STONE); // floor
+        }
+        for y in 7..11 {
+            for x in 1..4 {
+                g.set(x, y, SAND);
+            }
+        }
+        let sand0 = g.count(SAND);
+        for x in 1..4 {
+            g.set(x, 2, ACID);
+        }
+        let acid0 = g.count(ACID);
+        for _ in 0..400 {
+            g.step();
+        }
+        assert!(g.count(SAND) < sand0, "acid dissolved sand");
+        assert!(g.count(ACID) < acid0, "acid was consumed");
+    }
+
+    #[test]
+    fn spark_conducts_along_copper_then_settles() {
+        let mut g = Grid::new(22, 3, 1);
+        for x in 0..22 {
+            g.set(x, 1, COPPER);
+        }
+        g.set(0, 1, SPARK);
+        let mut reached = false;
+        for _ in 0..80 {
+            g.step();
+            let m = g.material_at(20, 1);
+            if m == SPARK || m == CHARGED {
+                reached = true;
+                break;
+            }
+        }
+        assert!(reached, "spark conducted to the far end of the wire");
+
+        for _ in 0..200 {
+            g.step();
+        }
+        assert_eq!(g.count(SPARK), 0, "no perpetual spark");
+        assert_eq!(g.count(CHARGED), 0, "charge decayed back to copper");
+        assert_eq!(g.count(COPPER), 22, "wire restored");
+        assert_eq!(g.awake_chunk_count(), 0, "and the grid sleeps");
+    }
+
+    #[test]
+    fn spark_ignites_oil() {
+        let mut g = Grid::new(5, 3, 1);
+        g.set(1, 1, COPPER);
+        g.set(2, 1, OIL);
+        g.set(1, 1, SPARK); // overwrite copper with spark next to oil
+        let mut saw_fire = false;
+        for _ in 0..10 {
+            g.step();
+            if g.count(FIRE) > 0 {
+                saw_fire = true;
+                break;
+            }
+        }
+        assert!(saw_fire, "spark ignited adjacent oil");
     }
 
     #[test]

@@ -59,6 +59,11 @@ pub const ICE: MaterialId = 6;
 pub const STEAM: MaterialId = 7;
 pub const LAVA: MaterialId = 8;
 pub const BASALT: MaterialId = 9;
+pub const COPPER: MaterialId = 10;
+pub const SPARK: MaterialId = 11;
+pub const CHARGED: MaterialId = 12;
+pub const FIRE: MaterialId = 13;
+pub const ACID: MaterialId = 14;
 
 const NEVER_HOT: f32 = f32::INFINITY;
 const NEVER_COLD: f32 = f32::NEG_INFINITY;
@@ -132,7 +137,7 @@ pub static MATERIALS: &[MaterialProps] = &[
     MaterialProps {
         name: "Oil",
         phase: Phase::Liquid,
-        density: 800, // lighter than water -> floats. Flammable (M6).
+        density: 800, // lighter than water -> floats.
         color: [90, 70, 40],
         color_jitter: 12,
         dispersion: 4,
@@ -140,8 +145,8 @@ pub static MATERIALS: &[MaterialProps] = &[
         decay_to: EMPTY,
         default_temp: 20.0,
         conductivity: 0.08,
-        high_temp: NEVER_HOT,
-        high_to: EMPTY,
+        high_temp: 350.0, // autoignites when hot enough
+        high_to: FIRE,
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
@@ -225,7 +230,127 @@ pub static MATERIALS: &[MaterialProps] = &[
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
+    MaterialProps {
+        name: "Copper",
+        phase: Phase::Solid,
+        density: 9000,
+        color: [200, 120, 70],
+        color_jitter: 10,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.22, // good thermal + electrical conductor
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Spark",
+        phase: Phase::Energy,
+        density: 0,
+        color: [255, 245, 180],
+        color_jitter: 0,
+        dispersion: 0,
+        // Lives 2 ticks then leaves a refractory Charged trail; this makes a
+        // clean traveling wave that doesn't bounce back along the conductor.
+        life: 2,
+        decay_to: CHARGED,
+        default_temp: 60.0,
+        conductivity: 0.10,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Charged",
+        phase: Phase::Solid,
+        density: 9000,
+        color: [240, 200, 120],
+        color_jitter: 8,
+        dispersion: 0,
+        life: 4, // refractory period, then back to plain copper
+        decay_to: COPPER,
+        default_temp: 20.0,
+        conductivity: 0.22,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Fire",
+        phase: Phase::Gas, // flickers upward and disperses
+        density: -100,
+        color: [255, 140, 30],
+        color_jitter: 40,
+        dispersion: 3,
+        life: 60,
+        decay_to: SMOKE, // byproduct
+        default_temp: 700.0,
+        conductivity: 0.10,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Acid",
+        phase: Phase::Liquid,
+        density: 1100,
+        color: [120, 220, 60],
+        color_jitter: 16,
+        dispersion: 4,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.08,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
 ];
+
+/// A data-driven contact reaction: when a cell of `a` is adjacent to a cell of
+/// `b`, with probability `prob` (and only if the `a` cell's temperature is at
+/// least `min_temp`), `a` becomes `a_to` and `b` becomes `b_to`. Reactions are
+/// directional — the cell being processed is `a`.
+#[derive(Clone, Copy, Debug)]
+pub struct Reaction {
+    pub a: MaterialId,
+    pub b: MaterialId,
+    pub a_to: MaterialId,
+    pub b_to: MaterialId,
+    pub prob: f32,
+    pub min_temp: f32,
+}
+
+/// The reaction web. Emergent interactions, no per-pair code in the hot loop —
+/// the engine just walks this table.
+pub static REACTIONS: &[Reaction] = &[
+    // Combustion: fire spreads into oil; oil becomes more fire.
+    Reaction { a: FIRE, b: OIL, a_to: FIRE, b_to: FIRE, prob: 0.5, min_temp: NEVER_COLD },
+    // Fire is quenched by water (and flashes the water to steam).
+    Reaction { a: FIRE, b: WATER, a_to: SMOKE, b_to: STEAM, prob: 0.4, min_temp: NEVER_COLD },
+    // Spark conduction: a spark energizes adjacent plain copper (wave travel).
+    Reaction { a: SPARK, b: COPPER, a_to: SPARK, b_to: SPARK, prob: 1.0, min_temp: NEVER_COLD },
+    // A spark ignites oil; the spark itself becomes refractory.
+    Reaction { a: SPARK, b: OIL, a_to: CHARGED, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
+    // Corrosion: acid dissolves materials and is consumed in the process.
+    Reaction { a: ACID, b: SAND, a_to: EMPTY, b_to: EMPTY, prob: 0.20, min_temp: NEVER_COLD },
+    Reaction { a: ACID, b: STONE, a_to: EMPTY, b_to: EMPTY, prob: 0.10, min_temp: NEVER_COLD },
+    Reaction { a: ACID, b: COPPER, a_to: EMPTY, b_to: EMPTY, prob: 0.12, min_temp: NEVER_COLD },
+    Reaction { a: ACID, b: BASALT, a_to: EMPTY, b_to: EMPTY, prob: 0.08, min_temp: NEVER_COLD },
+];
+
+/// First reaction matching `(a, b)`, if any. Linear scan — the table is small.
+#[inline]
+pub fn reaction_for(a: MaterialId, b: MaterialId) -> Option<&'static Reaction> {
+    REACTIONS.iter().find(|r| r.a == a && r.b == b)
+}
 
 #[inline]
 pub fn props(id: MaterialId) -> &'static MaterialProps {

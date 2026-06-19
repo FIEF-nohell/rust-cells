@@ -12,7 +12,7 @@ Living log of decisions, roster, test status, perf numbers. One section per mile
 | M3 Liquids | ✅ done | 19 unit + proptest |
 | M4 Gases | ✅ done | 22 unit + proptest |
 | M5 Temperature & transitions | ✅ done | 30 unit + proptest |
-| M6 Reactions & energy | ⏳ | |
+| M6 Reactions & energy | ✅ done | 35 unit + proptest |
 | M7 Full roster | ⏳ | |
 | M8 App polish | ⏳ | |
 | M9 Threading | ⏳ | |
@@ -158,3 +158,31 @@ neighbour diffusion converges to the mean; emergent lava+water → basalt+steam.
 expected, justified, all within the 16.67 ms/60 fps budget.
 
 **App:** keys 1–9 select Sand/Water/Stone/Oil/Smoke/Ice/Steam/Lava/Basalt.
+
+---
+
+## M6 — Reactions & energy ✅
+
+**Decisions**
+- **Data-driven reaction table** `REACTIONS: [(a,b)->(a',b'), prob, min_temp]`; the hot
+  loop just walks it (`reaction_for`). Reactions run in their own pass **before movement**,
+  4-neighbour, one reaction per cell per tick. Reacted cells are gen-tagged so they neither
+  move nor react again that tick; both endpoints wake their chunks. `transform()` keeps the
+  transient count, life, gen and temperature consistent (a hot product raises cell temp so
+  cascades work).
+- **Fire** (Gas, life 60 → Smoke byproduct, 700°C): spreads into oil `(Fire,Oil)->(Fire,
+  Fire)`, quenched by water `(Fire,Water)->(Smoke,Steam)`. Oil also **autoignites** at
+  350°C (temperature path) — heat and contact both work.
+- **Spark/conduction:** Copper conductor; a **Spark** (Energy, life 2) energizes adjacent
+  plain copper `(Spark,Copper)->(Spark,Spark)` and leaves a refractory **Charged** trail
+  (life 4 → Copper). The refractory trail makes a clean traveling wave that doesn't bounce,
+  and the wire fully restores + sleeps afterward. Spark ignites oil `(Spark,Oil)->(Charged,
+  Fire)`.
+- **Acid** (corrosive Liquid): dissolves sand/stone/copper/basalt and is **consumed**
+  `(Acid,X)->(Empty,Empty)` at per-material probabilities.
+
+**Tests (35 unit + proptest):** fire consumes oil + emits smoke; fire quenched by water →
+steam; acid dissolves solid + is consumed; spark conducts end-to-end then settles (wire
+restored, grid sleeps); spark ignites oil.
+
+**App:** +Q Copper, E Spark, F Fire, C Acid.
