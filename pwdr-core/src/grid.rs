@@ -348,9 +348,15 @@ impl Grid {
                             }
                             let b = self.cells[nidx].material;
 
-                            // Explosive ignition: contact with fire/spark/lava detonates.
-                            let igniter =
-                                |m| m == material::FIRE || m == material::SPARK || m == material::LAVA;
+                            // Explosive ignition: fire, lava, or a live wire
+                            // (spark / charged copper) detonates it — so circuits
+                            // can set off bombs.
+                            let igniter = |m| {
+                                m == material::FIRE
+                                    || m == material::SPARK
+                                    || m == material::CHARGED
+                                    || m == material::LAVA
+                            };
                             let ra = material::explosive_radius(a);
                             let rb = material::explosive_radius(b);
                             if ra > 0 && igniter(b) {
@@ -2128,6 +2134,46 @@ mod tests {
             g.step();
         }
         assert!(g.count(FUSE) < fuse0 / 2, "fuse burned down: {}", g.count(FUSE));
+    }
+
+    #[test]
+    fn spark_and_charge_detonate_explosives() {
+        use crate::material::{CHARGED, TNT};
+        // Spark directly on a TNT cluster.
+        let mut g = Grid::new(20, 20, 1);
+        for y in 8..12 {
+            for x in 8..12 {
+                g.set(x, y, TNT);
+            }
+        }
+        g.set(7, 9, SPARK);
+        let mut blew = false;
+        for _ in 0..5 {
+            g.step();
+            if g.count(TNT) == 0 && g.count(FIRE) > 0 {
+                blew = true;
+                break;
+            }
+        }
+        assert!(blew, "spark detonated TNT");
+
+        // A live wire (charged copper) detonates TNT too — circuits trigger bombs.
+        let mut h = Grid::new(20, 20, 1);
+        for y in 8..12 {
+            for x in 8..12 {
+                h.set(x, y, TNT);
+            }
+        }
+        h.set(7, 9, CHARGED);
+        let mut blew2 = false;
+        for _ in 0..6 {
+            h.step();
+            if h.count(FIRE) > 0 {
+                blew2 = true;
+                break;
+            }
+        }
+        assert!(blew2, "charged wire detonated TNT");
     }
 
     #[test]
