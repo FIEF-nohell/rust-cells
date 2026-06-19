@@ -25,12 +25,14 @@ are the regression reference, not absolute claims.
 
 | Benchmark | Regime | Time / tick | Ticks/s | 60 fps? |
 |-----------|--------|-------------|---------|---------|
-| `full_active_256`  | 256×256, every cell moving | ~0.40 ms | ~2500 | ✓ |
-| `full_active_512`  | 512×512, every cell moving | ~1.60 ms | ~625  | ✓ |
-| `sparse_512`       | 512×512, small active blob  | ~0.24 ms | ~4150 | ✓ |
-| `sparse_1024`      | 1024×1024, small active blob| ~0.86 ms | ~1160 | ✓ |
+| `full_active_256`  | 256×256, every cell moving | ~1.02 ms | ~980  | ✓ |
+| `full_active_512`  | 512×512, every cell moving | ~3.94 ms | ~254  | ✓ |
+| `sparse_512`       | 512×512, small active blob  | ~0.39 ms | ~2550 | ✓ |
+| `sparse_1024`      | 1024×1024, small active blob| ~1.14 ms | ~875  | ✓ |
 
-Baseline established at **M2** (after chunking). Targets from the doctrine —
-256² fully active @ 60 fps and 512² sparse @ 60 fps single-threaded — are met with
-large headroom; 512² *fully* active also clears 60 fps. The 1024² fully-active stretch
-target is reserved for M9 (threading).
+Baseline established at **M2** (after chunking); refreshed at **M5** after adding the
+temperature/diffusion pass (movement + heat run only on awake chunks, so settled or
+thermally-uniform regions still cost nothing). Targets from the doctrine — 256² fully
+active @ 60 fps and 512² sparse @ 60 fps single-threaded — are met with large headroom;
+512² *fully* active also clears 60 fps. The 1024² fully-active stretch target is reserved
+for M9 (threading).

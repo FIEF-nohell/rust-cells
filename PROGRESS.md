@@ -11,7 +11,7 @@ Living log of decisions, roster, test status, perf numbers. One section per mile
 | M2 Chunks & dirty rects | ✅ done | 16 green |
 | M3 Liquids | ✅ done | 19 unit + proptest |
 | M4 Gases | ✅ done | 22 unit + proptest |
-| M5 Temperature & transitions | ⏳ | |
+| M5 Temperature & transitions | ✅ done | 30 unit + proptest |
 | M6 Reactions & energy | ⏳ | |
 | M7 Full roster | ⏳ | |
 | M8 App polish | ⏳ | |
@@ -129,3 +129,32 @@ and the grid re-sleeps; lighter liquid floats at/above the water surface (conser
 proptest broadened to Empty..Oil (all conservative).
 
 **App:** keys 1–5 = Sand/Water/Stone/Oil/Smoke.
+
+---
+
+## M5 — Temperature & transitions ✅
+
+**Decisions**
+- **Temperature field** = parallel `Vec<f32>` (one per cell). Kept *out* of `Cell`:
+  heat needs float range (−∞..1200+) and precision a packed byte would lose, and it is
+  only touched in the temperature pass — never in the movement hot path. Temperature
+  travels with a cell (swapped on move).
+- Diffusion: explicit 4-neighbour, **insulated boundary** (OOB neighbour = self, zero
+  flux), rate = per-material `conductivity` (≤0.25 for stability). Runs only on awake
+  chunks; a cell whose temp changes >EPS re-wakes via `touch`, so thermal activity rides
+  the existing chunk wake-set and a thermally-uniform region sleeps. (A static-but-hot
+  block still processes because `set_temperature`/diffusion call `touch`.)
+- Transitions are data-driven thresholds on each material: `high_temp→high_to`,
+  `low_temp→low_to`. Energy (temperature) is preserved across the change.
+- Roster +Ice (Water⇄, melt/freeze @0), +Steam (Water⇄, boil@100/condense@99),
+  +Lava (→Basalt@500) +Basalt (→Lava@1000). **Lava+water emergently** makes basalt +
+  steam via diffusion alone — no special-case reaction.
+
+**Tests (30 unit + proptest):** freeze, melt, boil, condense, solidify (one each);
+neighbour diffusion converges to the mean; emergent lava+water → basalt+steam.
+
+**Perf (M5 refresh, README):** full_active 256² ≈ 1.0 ms / 512² ≈ 3.9 ms; sparse 512² ≈
+0.39 ms / 1024² ≈ 1.1 ms. Regression vs M2 is the new heat pass on awake chunks —
+expected, justified, all within the 16.67 ms/60 fps budget.
+
+**App:** keys 1–9 select Sand/Water/Stone/Oil/Smoke/Ice/Steam/Lava/Basalt.

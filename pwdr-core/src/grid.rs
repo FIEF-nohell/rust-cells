@@ -35,6 +35,12 @@ pub struct Grid {
     width: usize,
     height: usize,
     cells: Vec<Cell>,
+    /// Temperature field, parallel to `cells` (one f32 per cell). Kept separate
+    /// from `Cell` rather than packed: heat math wants float precision and a
+    /// fixed-point byte in the 4-byte cell would lose range (−inf..1200+) and
+    /// complicate diffusion. It is only touched in the temperature pass, so it
+    /// stays out of the movement hot path entirely.
+    temp: Vec<f32>,
     /// Current moved-tag generation. Cycles 1..=255; 0 is the "untouched"
     /// sentinel. On wrap we clear all tags (amortized O(N)/255 ticks) so a
     /// stale tag can never collide with a new tick's generation.
@@ -66,6 +72,7 @@ impl Grid {
             width,
             height,
             cells: vec![Cell::EMPTY; width * height],
+            temp: vec![material::props(EMPTY).default_temp; width * height],
             gen: 0,
             frame_parity: false,
             rng: Rng::new(seed),
@@ -160,6 +167,7 @@ impl Grid {
             life,
             tint,
         };
+        self.temp[i] = material::props(mat).default_temp;
         self.touch(x, y);
     }
 
@@ -254,8 +262,95 @@ impl Grid {
     pub fn step(&mut self) {
         self.begin_tick();
         self.movement_pass();
+        self.temperature_pass();
         self.life_pass();
         self.frame_parity = !self.frame_parity;
+    }
+
+    /// Read a cell's temperature (test/HUD helper).
+    pub fn temperature_at(&self, x: usize, y: usize) -> f32 {
+        self.temp[self.idx(x, y)]
+    }
+
+    /// Force a cell's temperature and wake it (heat source / test helper).
+    pub fn set_temperature(&mut self, x: usize, y: usize, t: f32) {
+        let i = self.idx(x, y);
+        self.temp[i] = t;
+        self.touch(x, y);
+    }
+
+    /// Heat diffusion (explicit, 4-neighbour, insulated boundary) + temperature
+    /// driven phase transitions, over awake chunks only. A cell whose temperature
+    /// changed meaningfully — or that transformed — keeps its chunk awake; once a
+    /// region is thermally uniform it stops waking and sleeps.
+    fn temperature_pass(&mut self) {
+        const EPS: f32 = 0.05;
+        for cy in 0..self.chunks_y {
+            for cx in 0..self.chunks_x {
+                if !self.active[self.chunk_idx(cx, cy)] {
+                    continue;
+                }
+                let x0 = cx * CHUNK;
+                let y0 = cy * CHUNK;
+                let x1 = (x0 + CHUNK).min(self.width);
+                let y1 = (y0 + CHUNK).min(self.height);
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let i = self.idx(x, y);
+                        let here = self.temp[i];
+                        // Insulated boundary: OOB neighbour contributes `here`
+                        // (zero flux), so edges neither gain nor lose heat.
+                        let mut sum = 0.0f32;
+                        sum += if x > 0 { self.temp[i - 1] } else { here };
+                        sum += if x + 1 < self.width { self.temp[i + 1] } else { here };
+                        sum += if y > 0 { self.temp[i - self.width] } else { here };
+                        sum += if y + 1 < self.height {
+                            self.temp[i + self.width]
+                        } else {
+                            here
+                        };
+                        let rate = material::props(self.cells[i].material).conductivity;
+                        let next = here + rate * (sum * 0.25 - here);
+                        self.temp[i] = next;
+
+                        let changed = (next - here).abs() > EPS;
+                        let transitioned = self.try_transition(x, y, next);
+                        if changed || transitioned {
+                            self.touch(x, y);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Apply a temperature-driven phase transition to (x,y) if its temperature
+    /// crossed a threshold. Temperature (energy) is preserved across the change.
+    /// Returns whether a transition happened.
+    fn try_transition(&mut self, x: usize, y: usize, t: f32) -> bool {
+        let i = self.idx(x, y);
+        let p = material::props(self.cells[i].material);
+        let to = if t >= p.high_temp {
+            p.high_to
+        } else if t <= p.low_temp {
+            p.low_to
+        } else {
+            return false;
+        };
+        if to == self.cells[i].material {
+            return false;
+        }
+        if self.cells[i].life > 0 {
+            self.transients -= 1;
+        }
+        let new_life = material::props(to).life;
+        if new_life > 0 {
+            self.transients += 1;
+        }
+        self.cells[i].material = to;
+        self.cells[i].life = new_life;
+        self.cells[i].gen = self.gen;
+        true
     }
 
     /// Decrement transient life; expired cells become their `decay_to` product.
@@ -469,6 +564,7 @@ impl Grid {
         let i = self.idx(x, y);
         let j = self.idx(tx, ty);
         self.cells.swap(i, j);
+        self.temp.swap(i, j); // temperature travels with the cell
         self.cells[i].gen = self.gen;
         self.cells[j].gen = self.gen;
         self.touch(x, y);
@@ -547,7 +643,7 @@ pub fn can_move_into(mover: MaterialId, target: MaterialId, dy: isize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::material::{OIL, SAND, SMOKE, STONE, WATER};
+    use crate::material::{BASALT, ICE, LAVA, OIL, SAND, SMOKE, STEAM, STONE, WATER};
 
     #[test]
     fn cell_is_small() {
@@ -799,7 +895,7 @@ mod tests {
         }
         g.set(1, 1, SMOKE);
         assert_eq!(g.count(SMOKE), 1);
-        for _ in 0..200 {
+        for _ in 0..400 {
             g.step();
         }
         assert_eq!(g.count(SMOKE), 0, "smoke faded after its life");
@@ -844,6 +940,104 @@ mod tests {
             oil_row <= min_water_row,
             "oil ({oil_row}) must float at/above the water surface ({min_water_row})"
         );
+    }
+
+    // --- M5 temperature / transition tests ---
+
+    /// A single liquid/gas/solid cell trapped in a stone box, forced to `temp`.
+    /// Returns (grid, x, y). Movement can't move it, so transitions are isolated.
+    fn boxed(center: MaterialId, temp: f32) -> (Grid, usize, usize) {
+        let mut g = Grid::new(3, 3, 1);
+        for y in 0..3 {
+            for x in 0..3 {
+                g.set(x, y, STONE);
+            }
+        }
+        g.set(1, 1, center);
+        g.set_temperature(1, 1, temp);
+        (g, 1, 1)
+    }
+
+    #[test]
+    fn water_freezes_when_cold() {
+        let (mut g, x, y) = boxed(WATER, -50.0);
+        g.step();
+        assert_eq!(g.material_at(x, y), ICE, "cold water -> ice");
+    }
+
+    #[test]
+    fn ice_melts_when_warm() {
+        let (mut g, x, y) = boxed(ICE, 50.0);
+        g.step();
+        assert_eq!(g.material_at(x, y), WATER, "warm ice -> water");
+    }
+
+    #[test]
+    fn water_boils_to_steam() {
+        let (mut g, x, y) = boxed(WATER, 150.0);
+        g.step();
+        assert_eq!(g.material_at(x, y), STEAM, "hot water -> steam");
+    }
+
+    #[test]
+    fn steam_condenses_to_water() {
+        let (mut g, x, y) = boxed(STEAM, 50.0);
+        g.step();
+        assert_eq!(g.material_at(x, y), WATER, "cool steam -> water");
+    }
+
+    #[test]
+    fn lava_solidifies_when_cooled() {
+        let (mut g, x, y) = boxed(LAVA, 100.0);
+        g.step();
+        assert_eq!(g.material_at(x, y), BASALT, "cooled lava -> basalt");
+    }
+
+    #[test]
+    fn temperature_diffuses_between_neighbours() {
+        // Hot and cold cells side by side converge toward each other.
+        let mut g = Grid::new(2, 1, 1);
+        g.set(0, 0, STONE);
+        g.set(1, 0, STONE);
+        g.set_temperature(0, 0, 100.0);
+        g.set_temperature(1, 0, 0.0);
+        for _ in 0..200 {
+            g.step();
+        }
+        let a = g.temperature_at(0, 0);
+        let b = g.temperature_at(1, 0);
+        // Converges until the per-tick change drops below the sleep threshold
+        // (~diff 2), then the chunk sleeps — so they end close but not identical.
+        assert!((a - b).abs() < 3.0, "temps converged: {a} vs {b}");
+        assert!((a - 50.0).abs() < 5.0, "toward the mean: {a}");
+    }
+
+    #[test]
+    fn lava_and_water_react_thermally() {
+        // Emergent: hot lava + cold water -> basalt crust + steam, no special rule.
+        let mut g = Grid::new(9, 12, 5);
+        for y in 0..12 {
+            g.set(0, y, STONE);
+            g.set(8, y, STONE);
+        }
+        for x in 0..9 {
+            g.set(x, 11, STONE); // floor
+        }
+        for y in 7..11 {
+            for x in 1..8 {
+                g.set(x, y, LAVA); // lava pool
+            }
+        }
+        for y in 3..7 {
+            for x in 1..8 {
+                g.set(x, y, WATER); // water on top
+            }
+        }
+        for _ in 0..400 {
+            g.step();
+        }
+        assert!(g.count(BASALT) > 0, "lava solidified to basalt on contact");
+        assert!(g.count(STEAM) > 0, "water flashed to steam");
     }
 
     #[test]
