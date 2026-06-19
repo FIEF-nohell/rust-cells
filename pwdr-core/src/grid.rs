@@ -315,6 +315,22 @@ impl Grid {
                         if a == EMPTY || self.cells[i].gen == self.gen {
                             continue;
                         }
+                        if a == material::CLONE {
+                            self.update_clone(x, y, &NEIGHBOURS);
+                            continue;
+                        }
+                        if a == material::VOID {
+                            self.update_void(x, y, &NEIGHBOURS);
+                            continue;
+                        }
+                        // Tracks whether this cell has a live reactive partner.
+                        // If so but the (probabilistic) reaction didn't fire this
+                        // tick, we still keep the chunk awake — otherwise an
+                        // ongoing reaction in an otherwise-static scene (plant
+                        // growing in still water, cryo freezing a pool) would stop
+                        // the moment the region settled to sleep.
+                        let mut reactive = false;
+                        let mut done = false;
                         for (dx, dy) in NEIGHBOURS {
                             let nx = x as isize + dx;
                             let ny = y as isize + dy;
@@ -335,26 +351,80 @@ impl Grid {
                             let rb = material::explosive_radius(b);
                             if ra > 0 && igniter(b) {
                                 self.explode(x, y, ra as isize);
+                                done = true;
                                 break;
                             }
                             if rb > 0 && igniter(a) {
                                 self.explode(nx, ny, rb as isize);
                                 self.touch(x, y);
+                                done = true;
                                 break;
                             }
 
                             if let Some(r) = material::reaction_for(a, b) {
+                                reactive = true;
                                 if self.temp[i] >= r.min_temp && self.rng.chance(r.prob) {
                                     self.transform(x, y, r.a_to);
                                     self.transform(nx, ny, r.b_to);
                                     self.touch(x, y);
                                     self.touch(nx, ny);
+                                    done = true;
                                     break;
                                 }
                             }
                         }
+                        if reactive && !done {
+                            self.touch(x, y);
+                        }
                     }
                 }
+            }
+        }
+    }
+
+    /// Clone: copy the first non-empty (non-clone/void) neighbour's material into
+    /// every empty neighbour — an infinite source of whatever it's fed.
+    fn update_clone(&mut self, x: usize, y: usize, neigh: &[(isize, isize); 4]) {
+        let mut src = EMPTY;
+        for (dx, dy) in neigh {
+            let (nx, ny) = (x as isize + dx, y as isize + dy);
+            if !self.in_bounds(nx, ny) {
+                continue;
+            }
+            let m = self.material_at(nx as usize, ny as usize);
+            if m != EMPTY && m != material::CLONE && m != material::VOID {
+                src = m;
+                break;
+            }
+        }
+        if src == EMPTY {
+            return;
+        }
+        for (dx, dy) in neigh {
+            let (nx, ny) = (x as isize + dx, y as isize + dy);
+            if !self.in_bounds(nx, ny) {
+                continue;
+            }
+            let (nx, ny) = (nx as usize, ny as usize);
+            if self.material_at(nx, ny) == EMPTY {
+                self.transform(nx, ny, src);
+                self.touch(nx, ny);
+            }
+        }
+    }
+
+    /// Void: delete any non-empty (non-void) neighbour — an infinite sink.
+    fn update_void(&mut self, x: usize, y: usize, neigh: &[(isize, isize); 4]) {
+        for (dx, dy) in neigh {
+            let (nx, ny) = (x as isize + dx, y as isize + dy);
+            if !self.in_bounds(nx, ny) {
+                continue;
+            }
+            let (nx, ny) = (nx as usize, ny as usize);
+            let m = self.material_at(nx, ny);
+            if m != EMPTY && m != material::VOID {
+                self.transform(nx, ny, EMPTY);
+                self.touch(nx, ny);
             }
         }
     }
@@ -1053,8 +1123,9 @@ pub fn can_move_into(mover: MaterialId, target: MaterialId, dy: isize) -> bool {
 mod tests {
     use super::*;
     use crate::material::{
-        ACID, BASALT, CHARGED, COOLED, COPPER, CRYO, FIRE, FUME, GLASS, GUNPOWDER, ICE, LAVA, OIL,
-        SAND, SMOKE, SPARK, STEAM, STONE, WATER, WOOD,
+        ACID, BASALT, CHARGED, CLONE, COOLED, COPPER, CRYO, FIRE, FUME, GLASS, GUNPOWDER, ICE,
+        LAVA, OIL, PLANT, SALT, SALTWATER, SAND, SMOKE, SPARK, STEAM, STONE, THERMITE, VOID, WATER,
+        WOOD,
     };
 
     #[test]
@@ -1429,7 +1500,7 @@ mod tests {
             g.set(x, 4, COPPER);
         }
         for _ in 0..300 {
-            g.set_temperature(0, 4, 2000.0); // held source
+            g.set_temperature(0, 4, 1000.0); // held source (below copper's melt point)
             g.step();
         }
         let wire = g.temperature_at(5, 4);
@@ -1874,6 +1945,122 @@ mod tests {
         assert_eq!(g.count(CHARGED), 0);
         assert_eq!(g.count(COOLED), 0);
         assert_eq!(g.count(SPARK), 0, "spark faded");
+    }
+
+    // --- new-elements tests ---
+
+    #[test]
+    fn clone_emits_its_source() {
+        let mut g = Grid::new(7, 7, 1);
+        for x in 0..7 {
+            g.set(x, 6, STONE); // floor to catch cloned sand
+        }
+        g.set(3, 3, CLONE);
+        g.set(3, 2, SAND); // feed sand from above
+        for _ in 0..40 {
+            g.step();
+        }
+        assert!(g.count(SAND) > 3, "clone produced sand: {}", g.count(SAND));
+    }
+
+    #[test]
+    fn void_deletes_neighbours() {
+        let mut g = Grid::new(7, 9, 1);
+        g.set(3, 4, VOID);
+        for y in 0..3 {
+            g.set(3, y, SAND); // sand falls onto the void and is eaten
+        }
+        for _ in 0..60 {
+            g.step();
+        }
+        assert_eq!(g.count(SAND), 0, "void deleted all the sand");
+        assert_eq!(g.material_at(3, 4), VOID, "void persists");
+    }
+
+    #[test]
+    fn salt_dissolves_in_water_and_melts_ice() {
+        let mut g = Grid::new(5, 5, 1);
+        for y in 0..5 {
+            for x in 0..5 {
+                g.set(x, y, WATER);
+            }
+        }
+        g.set(2, 2, SALT);
+        for _ in 0..40 {
+            g.step();
+        }
+        assert_eq!(g.count(SALT), 0, "salt dissolved");
+
+        assert!(g.count(SALTWATER) > 0, "salt dissolved into brine");
+
+        let mut h = Grid::new(5, 5, 1);
+        for y in 0..5 {
+            for x in 0..5 {
+                h.set(x, y, ICE);
+            }
+        }
+        h.set(2, 2, SALT);
+        let ice0 = h.count(ICE);
+        for _ in 0..60 {
+            h.step();
+        }
+        // Brine does not refreeze, so the thaw persists.
+        assert!(h.count(ICE) < ice0, "salt melted ice");
+        assert!(h.count(SALTWATER) > 0, "ice thawed into brine");
+    }
+
+    #[test]
+    fn plant_grows_along_water_and_burns() {
+        let mut g = Grid::new(7, 7, 1);
+        for y in 0..7 {
+            for x in 0..7 {
+                g.set(x, y, WATER);
+            }
+        }
+        g.set(3, 3, PLANT);
+        for _ in 0..200 {
+            g.step();
+        }
+        let grown = g.count(PLANT);
+        assert!(grown > 1, "plant spread through water: {grown}");
+
+        g.set(3, 3, FIRE);
+        let mut saw_drop = false;
+        let before = g.count(PLANT);
+        for _ in 0..300 {
+            g.step();
+            if g.count(PLANT) < before {
+                saw_drop = true;
+            }
+        }
+        assert!(saw_drop, "fire burned the plant");
+    }
+
+    #[test]
+    fn thermite_flashes_to_molten() {
+        let mut g = Grid::new(5, 5, 1);
+        for y in 0..5 {
+            for x in 0..5 {
+                g.set(x, y, THERMITE);
+            }
+        }
+        g.set(2, 2, FIRE);
+        let mut saw_lava = false;
+        for _ in 0..80 {
+            g.step();
+            if g.count(LAVA) > 0 {
+                saw_lava = true;
+                break;
+            }
+        }
+        assert!(saw_lava, "thermite ignited into molten slag (lava)");
+    }
+
+    #[test]
+    fn copper_melts_when_very_hot() {
+        let (mut g, x, y) = boxed(COPPER, 1200.0);
+        g.step();
+        assert_eq!(g.material_at(x, y), LAVA, "molten copper -> lava");
     }
 
     #[test]

@@ -72,6 +72,12 @@ pub const GLASS: MaterialId = 19;
 pub const COOLED: MaterialId = 20;
 pub const PLASMA: MaterialId = 21;
 pub const FROST: MaterialId = 22;
+pub const CLONE: MaterialId = 23;
+pub const VOID: MaterialId = 24;
+pub const SALT: MaterialId = 25;
+pub const PLANT: MaterialId = 26;
+pub const THERMITE: MaterialId = 27;
+pub const SALTWATER: MaterialId = 28;
 
 const NEVER_HOT: f32 = f32::INFINITY;
 const NEVER_COLD: f32 = f32::NEG_INFINITY;
@@ -251,8 +257,8 @@ pub static MATERIALS: &[MaterialProps] = &[
         decay_to: EMPTY,
         default_temp: 20.0,
         conductivity: 0.50,
-        high_temp: NEVER_HOT,
-        high_to: EMPTY,
+        high_temp: 1085.0, // melts to molten metal (lava) — e.g. thermite/lava
+        high_to: LAVA,
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
@@ -453,6 +459,102 @@ pub static MATERIALS: &[MaterialProps] = &[
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
+    MaterialProps {
+        name: "Clone",
+        phase: Phase::Solid, // emits copies of an adjacent material into empty space
+        density: 9000,
+        color: [90, 160, 120],
+        color_jitter: 6,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.05,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Void",
+        phase: Phase::Solid, // deletes whatever touches it
+        density: 9000,
+        color: [40, 20, 50],
+        color_jitter: 6,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.05,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Salt",
+        phase: Phase::Powder, // dissolves in water, melts ice
+        density: 1500,
+        color: [230, 230, 235],
+        color_jitter: 12,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.07,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Plant",
+        phase: Phase::Solid, // grows along water; flammable
+        density: 9000,
+        color: [60, 160, 60],
+        color_jitter: 22,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.05,
+        high_temp: 250.0, // dries out and ignites when hot
+        high_to: FIRE,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Thermite",
+        phase: Phase::Powder, // burns into molten slag (lava) hot enough to melt metal
+        density: 1800,
+        color: [140, 70, 50],
+        color_jitter: 16,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.08,
+        high_temp: 300.0,
+        high_to: LAVA, // ignites to molten
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Saltwater",
+        phase: Phase::Liquid, // brine: denser than water, does NOT freeze
+        density: 1025,
+        color: [60, 120, 150],
+        color_jitter: 14,
+        dispersion: 5,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.12,
+        high_temp: 100.0,
+        high_to: STEAM, // boils (salt left behind is abstracted away)
+        low_temp: NEVER_COLD, // freezing-point depression: stays liquid
+        low_to: EMPTY,
+    },
 ];
 
 /// Internal materials the user shouldn't paint (transient conduction states).
@@ -520,6 +622,18 @@ pub static REACTIONS: &[Reaction] = &[
     Reaction { a: LAVA, b: FUME, a_to: LAVA, b_to: FIRE, prob: 0.6, min_temp: NEVER_COLD },
     // Cold source: cryo freezes adjacent water regardless of its own temperature.
     Reaction { a: CRYO, b: WATER, a_to: CRYO, b_to: ICE, prob: 0.30, min_temp: NEVER_COLD },
+    // Salt dissolves water into brine (consumed) and melts ice into brine, which
+    // does not refreeze — so salt genuinely thaws ice.
+    Reaction { a: SALT, b: WATER, a_to: EMPTY, b_to: SALTWATER, prob: 0.25, min_temp: NEVER_COLD },
+    Reaction { a: SALT, b: ICE, a_to: SALTWATER, b_to: SALTWATER, prob: 0.50, min_temp: NEVER_COLD },
+    // Plant creeps along water and burns readily.
+    Reaction { a: PLANT, b: WATER, a_to: PLANT, b_to: PLANT, prob: 0.06, min_temp: NEVER_COLD },
+    Reaction { a: FIRE, b: PLANT, a_to: FIRE, b_to: FIRE, prob: 0.35, min_temp: NEVER_COLD },
+    Reaction { a: LAVA, b: PLANT, a_to: LAVA, b_to: FIRE, prob: 0.7, min_temp: NEVER_COLD },
+    // Thermite flashes to molten slag on contact with fire/spark/lava.
+    Reaction { a: FIRE, b: THERMITE, a_to: FIRE, b_to: LAVA, prob: 0.6, min_temp: NEVER_COLD },
+    Reaction { a: SPARK, b: THERMITE, a_to: CHARGED, b_to: LAVA, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction { a: LAVA, b: THERMITE, a_to: LAVA, b_to: LAVA, prob: 0.5, min_temp: NEVER_COLD },
 ];
 
 /// First reaction matching `(a, b)`, if any. Linear scan — the table is small.
