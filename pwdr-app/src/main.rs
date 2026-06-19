@@ -2,7 +2,7 @@
 //! Holds as little logic as possible; all simulation lives in `pwdr-core`.
 
 use macroquad::prelude::*;
-use pwdr_core::material::{self, EMPTY, SAND, STONE, WATER};
+use pwdr_core::material::{self, EMPTY, OIL, SAND, SMOKE, STONE, WATER};
 use pwdr_core::Grid;
 
 const GRID_W: usize = 256;
@@ -44,6 +44,12 @@ async fn main() {
         }
         if is_key_pressed(KeyCode::Key3) {
             selected = STONE;
+        }
+        if is_key_pressed(KeyCode::Key4) {
+            selected = OIL;
+        }
+        if is_key_pressed(KeyCode::Key5) {
+            selected = SMOKE;
         }
         // Brush size.
         if is_key_pressed(KeyCode::LeftBracket) && brush > 0 {

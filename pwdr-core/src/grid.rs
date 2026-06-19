@@ -51,6 +51,9 @@ pub struct Grid {
     active: Vec<bool>,
     /// Chunks to process *next* tick — accumulated as cells are written.
     wake: Vec<bool>,
+    /// Count of cells with `life > 0`. When zero, the life pass is skipped — so
+    /// transients cost nothing when none exist. Movement swaps preserve it.
+    transients: usize,
 }
 
 impl Grid {
@@ -73,6 +76,7 @@ impl Grid {
             // Start with every chunk queued so the first tick visits all of it,
             // then chunks settle to sleep.
             wake: vec![true; nchunks],
+            transients: 0,
         }
     }
 
@@ -142,11 +146,18 @@ impl Grid {
     /// Place a single cell of `mat` with a fresh per-cell tint. `EMPTY` clears.
     pub fn set(&mut self, x: usize, y: usize, mat: MaterialId) {
         let i = self.idx(x, y);
+        if self.cells[i].life > 0 {
+            self.transients -= 1;
+        }
         let tint = self.rng.next_u32() as u8;
+        let life = material::props(mat).life;
+        if life > 0 {
+            self.transients += 1;
+        }
         self.cells[i] = Cell {
             material: mat,
             gen: 0,
-            life: 0,
+            life,
             tint,
         };
         self.touch(x, y);
@@ -243,7 +254,54 @@ impl Grid {
     pub fn step(&mut self) {
         self.begin_tick();
         self.movement_pass();
+        self.life_pass();
         self.frame_parity = !self.frame_parity;
+    }
+
+    /// Decrement transient life; expired cells become their `decay_to` product.
+    /// Only scans awake chunks (a transient is, by definition, active). Keeps
+    /// the cell's chunk awake while it still lives so it can't be stranded asleep.
+    fn life_pass(&mut self) {
+        if self.transients == 0 {
+            return;
+        }
+        for cy in 0..self.chunks_y {
+            for cx in 0..self.chunks_x {
+                if !self.active[self.chunk_idx(cx, cy)] {
+                    continue;
+                }
+                let x0 = cx * CHUNK;
+                let y0 = cy * CHUNK;
+                let x1 = (x0 + CHUNK).min(self.width);
+                let y1 = (y0 + CHUNK).min(self.height);
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let i = self.idx(x, y);
+                        let life = self.cells[i].life;
+                        if life == 0 {
+                            continue;
+                        }
+                        if life == 1 {
+                            let decay = material::props(self.cells[i].material).decay_to;
+                            let new_life = material::props(decay).life;
+                            if new_life == 0 {
+                                self.transients -= 1;
+                            }
+                            self.cells[i] = Cell {
+                                material: decay,
+                                gen: self.gen,
+                                life: new_life,
+                                tint: self.cells[i].tint,
+                            };
+                            self.touch(x, y);
+                        } else {
+                            self.cells[i].life = life - 1;
+                            self.touch(x, y); // still alive -> stay awake
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Bottom-up scan so a falling cell moves exactly one row per tick.
@@ -279,7 +337,8 @@ impl Grid {
         match material::phase(cell.material) {
             Phase::Powder => self.update_powder(x, y),
             Phase::Liquid => self.update_liquid(x, y),
-            // Other phases land in later milestones.
+            Phase::Gas => self.update_gas(x, y),
+            // Energy propagation lands in later milestones.
             _ => {}
         }
     }
@@ -341,6 +400,30 @@ impl Grid {
         let _ = self.try_move(x, y, x as isize + dir, y as isize, mat);
     }
 
+    /// Gas: the inverse of liquid. Rises (up), else an up-diagonal, else
+    /// disperses sideways into empty/lighter. Buoyancy via the same directional
+    /// rule (lighter rises through heavier fluids). Finite-life gases fade in the
+    /// life pass.
+    fn update_gas(&mut self, x: usize, y: usize) {
+        let mat = self.material_at(x, y);
+        if self.try_move(x, y, x as isize, y as isize - 1, mat) {
+            return;
+        }
+        let left_first = self.rng.bool();
+        let (a, b) = if left_first { (-1, 1) } else { (1, -1) };
+        if self.try_move(x, y, x as isize + a, y as isize - 1, mat) {
+            return;
+        }
+        if self.try_move(x, y, x as isize + b, y as isize - 1, mat) {
+            return;
+        }
+        // Disperse: a single sideways step (randomized) when it can't rise.
+        if self.try_move(x, y, x as isize + a, y as isize, mat) {
+            return;
+        }
+        let _ = self.try_move(x, y, x as isize + b, y as isize, mat);
+    }
+
     /// Scan `dir` (±1) up to `max` steps through cells this liquid can pass
     /// (empty/lighter). Returns the step count of the nearest column where it can
     /// also fall (cell below is displaceable), or `None` if none / path blocked.
@@ -351,12 +434,12 @@ impl Grid {
                 return None;
             }
             let nx = nx as usize;
-            if !displaces(mat, self.material_at(nx, y)) {
+            if !can_move_into(mat, self.material_at(nx, y), 0) {
                 return None; // path blocked
             }
             let below = y as isize + 1;
             if self.in_bounds(nx as isize, below)
-                && displaces(mat, self.material_at(nx, below as usize))
+                && can_move_into(mat, self.material_at(nx, below as usize), 1)
             {
                 return Some(step);
             }
@@ -371,9 +454,10 @@ impl Grid {
         if !self.in_bounds(tx, ty) {
             return false;
         }
+        let dy = ty - y as isize;
         let (tx, ty) = (tx as usize, ty as usize);
         let target = self.material_at(tx, ty);
-        if !displaces(mat, target) {
+        if !can_move_into(mat, target, dy) {
             return false;
         }
         self.swap_cells(x, y, tx, ty);
@@ -430,16 +514,32 @@ impl Grid {
     }
 }
 
-/// Generalized displacement rule: heavier movable cell swaps through a lighter
-/// fluid/gas; anything moves into empty. Solids and same-or-denser block.
+/// Generalized, direction-aware displacement. `dy` is the vertical component of
+/// the attempted move: `+1` sinking, `-1` rising, `0` lateral.
+///
+/// One rule covers every cross-phase case:
+///   * into empty — always.
+///   * into a fluid (Liquid/Gas) — when sinking, the denser cell wins; when
+///     rising, the lighter cell wins; laterally, the denser pushes the lighter.
+///   * into a solid or powder — never (they block; fluids flow around).
+///
+/// This single rule yields sand-through-water, oil-on-water, and gas-rising with
+/// no per-pair code.
 #[inline]
-pub fn displaces(mover: MaterialId, target: MaterialId) -> bool {
+pub fn can_move_into(mover: MaterialId, target: MaterialId, dy: isize) -> bool {
     if target == EMPTY {
         return true;
     }
     let tp = material::props(target);
+    let md = material::props(mover).density;
     match tp.phase {
-        Phase::Liquid | Phase::Gas => material::props(mover).density > tp.density,
+        Phase::Liquid | Phase::Gas => {
+            if dy < 0 {
+                md < tp.density // rising: lighter displaces heavier
+            } else {
+                md > tp.density // sinking / lateral: denser displaces lighter
+            }
+        }
         _ => false,
     }
 }
@@ -447,7 +547,7 @@ pub fn displaces(mover: MaterialId, target: MaterialId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::material::{SAND, STONE, WATER};
+    use crate::material::{OIL, SAND, SMOKE, STONE, WATER};
 
     #[test]
     fn cell_is_small() {
@@ -669,6 +769,81 @@ mod tests {
         assert_eq!(g.material_at(3, 15), SAND, "sand sank to the bottom");
         // A water cell got displaced up to the old top of the pool.
         assert_eq!(g.material_at(3, 7), WATER, "water displaced upward");
+    }
+
+    // --- M4 gas / buoyancy tests ---
+
+    #[test]
+    fn gas_rises_one_row_per_tick() {
+        let mut g = Grid::new(9, 20, 4);
+        g.set(4, 18, SMOKE);
+        for step in 1..=12 {
+            g.step();
+            assert_eq!(
+                g.material_at(4, 18 - step),
+                SMOKE,
+                "smoke risen to row {}",
+                18 - step
+            );
+        }
+    }
+
+    #[test]
+    fn finite_life_gas_fades() {
+        // Smoke sealed in a 1-cell pocket can't move; it must fade to nothing.
+        let mut g = Grid::new(3, 3, 1);
+        for y in 0..3 {
+            for x in 0..3 {
+                g.set(x, y, STONE);
+            }
+        }
+        g.set(1, 1, SMOKE);
+        assert_eq!(g.count(SMOKE), 1);
+        for _ in 0..200 {
+            g.step();
+        }
+        assert_eq!(g.count(SMOKE), 0, "smoke faded after its life");
+        assert_eq!(g.material_at(1, 1), EMPTY, "decayed to empty");
+        assert_eq!(g.awake_chunk_count(), 0, "and the grid sleeps again");
+    }
+
+    #[test]
+    fn lighter_liquid_floats_on_denser() {
+        // Oil dropped at the bottom of a water pool must rise to the surface.
+        let mut g = Grid::new(6, 16, 11);
+        for y in 8..16 {
+            for x in 0..6 {
+                g.set(x, y, WATER);
+            }
+        }
+        let water0 = g.count(WATER);
+        g.set(3, 15, OIL); // overwrite a bottom water cell with oil
+        let water1 = g.count(WATER);
+        for _ in 0..300 {
+            g.step();
+        }
+        assert_eq!(g.count(OIL), 1, "oil conserved");
+        assert_eq!(g.count(WATER), water1, "water conserved");
+        assert!(water1 < water0); // sanity: one water cell was overwritten
+
+        // Oil floats: it ends at or above the water surface — no water sits above
+        // it. (Diagonal sinking can nudge the bubble between columns, so we check
+        // the float ordering across the whole grid, not within one column.)
+        let mut oil_row = usize::MAX;
+        let mut min_water_row = usize::MAX;
+        for y in 0..g.height() {
+            for x in 0..g.width() {
+                match g.material_at(x, y) {
+                    OIL => oil_row = oil_row.min(y),
+                    WATER => min_water_row = min_water_row.min(y),
+                    _ => {}
+                }
+            }
+        }
+        assert!(
+            oil_row <= min_water_row,
+            "oil ({oil_row}) must float at/above the water surface ({min_water_row})"
+        );
     }
 
     #[test]

@@ -31,8 +31,10 @@ proptest! {
         h in 4usize..40,
         seed: u64,
         // up to 12 paint ops: (x_frac, y_frac, radius, material)
+        // materials 0..=4 (Empty..Oil) — all non-transient, so mass is strictly
+        // conserved. Smoke (5) decays and is exercised in the unit life tests.
         ops in proptest::collection::vec(
-            (0u16..1000, 0u16..1000, 0usize..4, 0u8..4),
+            (0u16..1000, 0u16..1000, 0usize..4, 0u8..5),
             0..12,
         ),
         ticks in 0u32..120,

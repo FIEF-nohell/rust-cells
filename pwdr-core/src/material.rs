@@ -33,6 +33,11 @@ pub struct MaterialProps {
     pub color_jitter: u8,
     /// Sideways spread per tick for fluids/gases. Powders/solids: 0. (M3+)
     pub dispersion: u8,
+    /// Initial life for transient cells; 0 = permanent. Decrements each tick and
+    /// the cell becomes [`MaterialProps::decay_to`] at 0. (M4+)
+    pub life: u8,
+    /// What a transient becomes when its life expires.
+    pub decay_to: MaterialId,
 }
 
 // ---- Material ids ---------------------------------------------------------
@@ -43,6 +48,8 @@ pub const EMPTY: MaterialId = 0;
 pub const STONE: MaterialId = 1;
 pub const SAND: MaterialId = 2;
 pub const WATER: MaterialId = 3;
+pub const OIL: MaterialId = 4;
+pub const SMOKE: MaterialId = 5;
 
 /// The material table, indexed by [`MaterialId`]. Order MUST match the ids above.
 pub static MATERIALS: &[MaterialProps] = &[
@@ -53,6 +60,8 @@ pub static MATERIALS: &[MaterialProps] = &[
         color: [0, 0, 0],
         color_jitter: 0,
         dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
     },
     MaterialProps {
         name: "Stone",
@@ -61,6 +70,8 @@ pub static MATERIALS: &[MaterialProps] = &[
         color: [120, 120, 128],
         color_jitter: 12,
         dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
     },
     MaterialProps {
         name: "Sand",
@@ -69,6 +80,8 @@ pub static MATERIALS: &[MaterialProps] = &[
         color: [194, 178, 110],
         color_jitter: 18,
         dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
     },
     MaterialProps {
         name: "Water",
@@ -77,6 +90,30 @@ pub static MATERIALS: &[MaterialProps] = &[
         color: [40, 90, 200],
         color_jitter: 14,
         dispersion: 5,
+        life: 0,
+        decay_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Oil",
+        phase: Phase::Liquid,
+        // Lighter than water -> floats on it. Flammable (used from M6).
+        density: 800,
+        color: [90, 70, 40],
+        color_jitter: 12,
+        dispersion: 4,
+        life: 0,
+        decay_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Smoke",
+        phase: Phase::Gas,
+        // Negative density -> rises through air and liquids. Fades over time.
+        density: -50,
+        color: [60, 60, 64],
+        color_jitter: 16,
+        dispersion: 6,
+        life: 180,
+        decay_to: EMPTY,
     },
 ];
 

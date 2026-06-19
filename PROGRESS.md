@@ -10,7 +10,7 @@ Living log of decisions, roster, test status, perf numbers. One section per mile
 | M1 Grid + first powder | ✅ done | 11 green |
 | M2 Chunks & dirty rects | ✅ done | 16 green |
 | M3 Liquids | ✅ done | 19 unit + proptest |
-| M4 Gases | ⏳ | |
+| M4 Gases | ✅ done | 22 unit + proptest |
 | M5 Temperature & transitions | ⏳ | |
 | M6 Reactions & energy | ⏳ | |
 | M7 Full roster | ⏳ | |
@@ -107,3 +107,25 @@ spreads along floor; denser powder sinks through liquid (both conserved); plus t
 **proptest** suite (200 cases): no panic / no OOB, all ids valid, movement conserves mass.
 
 **App:** keys 1/2/3 select Sand/Water/Stone, `[`/`]` brush size, HUD shows selection.
+
+---
+
+## M4 — Gases ✅
+
+**Decisions**
+- Replaced the displacement rule with **direction-aware** `can_move_into(mover, target, dy)`:
+  sinking → denser wins, rising → lighter wins, lateral → denser pushes lighter, empty
+  always passable. This *one* rule now yields sand-through-water, oil-on-water, and
+  gas-rising with zero per-pair code (locked decision #4 / the generalized density rule).
+- Gas movement = inverse of liquid: up → up-diagonal → sideways dispersion.
+- **Transient life:** `MaterialProps.life` / `decay_to`; cells seed `life` on placement,
+  a `life_pass` decrements and converts on expiry. A `transients` counter skips the whole
+  pass when none exist → **zero cost** for non-transient scenes (full-active perf intact).
+- Roster +Oil (Liquid, density 800 < water → floats; flammable later) and +Smoke (Gas,
+  density −50, life 180 → fades to Empty).
+
+**Tests (22 unit + proptest):** gas rises one row/tick; finite-life gas fades to empty
+and the grid re-sleeps; lighter liquid floats at/above the water surface (conserved).
+proptest broadened to Empty..Oil (all conservative).
+
+**App:** keys 1–5 = Sand/Water/Stone/Oil/Smoke.
