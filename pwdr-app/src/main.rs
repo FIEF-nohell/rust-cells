@@ -29,7 +29,59 @@ fn window_conf() -> Conf {
         window_width: (256.0 * SCALE + PANEL_W) as i32,
         window_height: (256.0 * SCALE) as i32,
         window_resizable: true,
+        icon: Some(make_icon()),
         ..Default::default()
+    }
+}
+
+/// One icon pixel (normalized coords): a little falling-sand scene — sand mound,
+/// a falling grain stream, a water pool, and a fire ember, on a dark tile.
+fn icon_pixel(nx: f32, ny: f32) -> [u8; 4] {
+    let sand = [201, 182, 112, 255];
+    let water = [42, 96, 205, 255];
+    let fire = [255, 140, 42, 255];
+    let bg = [24, 24, 38, 255];
+
+    // fire ember (top-right)
+    let (dx, dy) = (nx - 0.74, ny - 0.24);
+    if dx * dx + dy * dy < 0.018 {
+        return fire;
+    }
+    // falling grain stream (dotted)
+    if (0.47..0.55).contains(&nx) && (0.26..0.60).contains(&ny) && ((ny * 22.0) as i32 % 3 != 0) {
+        return sand;
+    }
+    // water pool (bottom-left)
+    if nx < 0.40 && ny > 0.64 {
+        return water;
+    }
+    // sand mound (right hill)
+    let surface = 0.66 - (0.18 - (nx - 0.60).abs()).max(0.0);
+    if ny > surface && nx > 0.36 {
+        return sand;
+    }
+    bg
+}
+
+fn icon_image(n: usize) -> Vec<u8> {
+    let mut v = vec![0u8; n * n * 4];
+    for y in 0..n {
+        for x in 0..n {
+            let nx = (x as f32 + 0.5) / n as f32;
+            let ny = (y as f32 + 0.5) / n as f32;
+            let c = icon_pixel(nx, ny);
+            let i = (y * n + x) * 4;
+            v[i..i + 4].copy_from_slice(&c);
+        }
+    }
+    v
+}
+
+fn make_icon() -> macroquad::miniquad::conf::Icon {
+    macroquad::miniquad::conf::Icon {
+        small: icon_image(16).try_into().unwrap(),
+        medium: icon_image(32).try_into().unwrap(),
+        big: icon_image(64).try_into().unwrap(),
     }
 }
 
@@ -178,7 +230,14 @@ async fn main() {
             if in_panel {
                 palette_scroll = (palette_scroll - wheel * 24.0).max(0.0);
             } else if ctrl {
-                apply_zoom(&mut zoom, &mut view_x, &mut view_y, mx, my, if wheel > 0.0 { 1.2 } else { 1.0 / 1.2 });
+                apply_zoom(
+                    &mut zoom,
+                    &mut view_x,
+                    &mut view_y,
+                    mx,
+                    my,
+                    if wheel > 0.0 { 1.2 } else { 1.0 / 1.2 },
+                );
             } else if wheel > 0.0 {
                 brush = (brush + 1).min(MAX_BRUSH);
             } else {
@@ -257,7 +316,10 @@ async fn main() {
             None
         };
         if let Some(path) = load_req {
-            match std::fs::read(&path).ok().and_then(|b| Grid::deserialize(&b)) {
+            match std::fs::read(&path)
+                .ok()
+                .and_then(|b| Grid::deserialize(&b))
+            {
                 Some(g) => {
                     gw = g.width();
                     gh = g.height();
@@ -298,7 +360,8 @@ async fn main() {
         }
         let painting = !in_panel
             && !over_mm
-            && (is_mouse_button_down(MouseButton::Left) || is_mouse_button_down(MouseButton::Right));
+            && (is_mouse_button_down(MouseButton::Left)
+                || is_mouse_button_down(MouseButton::Right));
         if painting {
             let gx = (view_x + mx / psc).floor();
             let gy = (view_y + my / psc).floor();
@@ -379,7 +442,13 @@ async fn main() {
 
         // Minimap overview + viewport box (only useful when zoomed in).
         if zoom > 1.01 {
-            draw_rectangle(mm_x - 2.0, mm_y - 2.0, mm_w + 4.0, mm_h + 4.0, Color::from_rgba(0, 0, 0, 200));
+            draw_rectangle(
+                mm_x - 2.0,
+                mm_y - 2.0,
+                mm_w + 4.0,
+                mm_h + 4.0,
+                Color::from_rgba(0, 0, 0, 200),
+            );
             draw_texture_ex(
                 &texture,
                 mm_x,
@@ -395,13 +464,36 @@ async fn main() {
             let vw = (vis_w / gw as f32) * mm_w;
             let vh = (vis_h / gh as f32) * mm_h;
             draw_rectangle_lines(vx, vy, vw, vh, 2.0, Color::from_rgba(255, 255, 120, 230));
-            draw_rectangle_lines(mm_x, mm_y, mm_w, mm_h, 1.0, Color::from_rgba(120, 120, 140, 200));
+            draw_rectangle_lines(
+                mm_x,
+                mm_y,
+                mm_w,
+                mm_h,
+                1.0,
+                Color::from_rgba(120, 120, 140, 200),
+            );
         }
 
         draw_palette(&palette, selected, &search, panel_x, palette_scroll);
         draw_hud(
-            &grid, gw, gh, selected, brush, paused, heat_overlay, zoom, smooth_fps, smooth_tick_ms,
-            &status, mx, my, view_x, view_y, psc, panel_x, screen_height(),
+            &grid,
+            gw,
+            gh,
+            selected,
+            brush,
+            paused,
+            heat_overlay,
+            zoom,
+            smooth_fps,
+            smooth_tick_ms,
+            &status,
+            mx,
+            my,
+            view_x,
+            view_y,
+            psc,
+            panel_x,
+            screen_height(),
         );
 
         next_frame().await;
@@ -426,7 +518,10 @@ fn build_palette(search: &str, x0: f32) -> (Vec<PaletteItem>, f32) {
             .filter(|&id| material::props(id).phase == phase)
             .filter(|&id| {
                 search.is_empty()
-                    || material::props(id).name.to_ascii_lowercase().contains(search)
+                    || material::props(id)
+                        .name
+                        .to_ascii_lowercase()
+                        .contains(search)
             })
             .collect();
         if mats.is_empty() {
@@ -446,14 +541,26 @@ fn build_palette(search: &str, x0: f32) -> (Vec<PaletteItem>, f32) {
 
 fn draw_palette(palette: &[PaletteItem], selected: MaterialId, search: &str, x0: f32, scroll: f32) {
     const LIST_TOP: f32 = 54.0; // below the search box; items above this are clipped
-    draw_rectangle(x0, 0.0, PANEL_W, screen_height(), Color::from_rgba(28, 28, 34, 255));
+    draw_rectangle(
+        x0,
+        0.0,
+        PANEL_W,
+        screen_height(),
+        Color::from_rgba(28, 28, 34, 255),
+    );
 
     for item in palette {
         match item {
             PaletteItem::Header(label, y) => {
                 let dy = y - scroll;
                 if dy + 15.0 >= LIST_TOP && dy < screen_height() {
-                    draw_text(label, x0 + 8.0, dy + 15.0, 16.0, Color::from_rgba(150, 150, 165, 255));
+                    draw_text(
+                        label,
+                        x0 + 8.0,
+                        dy + 15.0,
+                        16.0,
+                        Color::from_rgba(150, 150, 165, 255),
+                    );
                 }
             }
             PaletteItem::Mat(id, rect) => {
@@ -462,20 +569,58 @@ fn draw_palette(palette: &[PaletteItem], selected: MaterialId, search: &str, x0:
                     continue;
                 }
                 if *id == selected {
-                    draw_rectangle(rect.x - 2.0, dy - 1.0, rect.w + 4.0, rect.h + 2.0, Color::from_rgba(80, 80, 100, 255));
+                    draw_rectangle(
+                        rect.x - 2.0,
+                        dy - 1.0,
+                        rect.w + 4.0,
+                        rect.h + 2.0,
+                        Color::from_rgba(80, 80, 100, 255),
+                    );
                 }
                 draw_rectangle(rect.x, dy, 16.0, rect.h, swatch(*id));
-                draw_rectangle_lines(rect.x, dy, 16.0, rect.h, 1.0, Color::from_rgba(0, 0, 0, 180));
-                draw_text(material::props(*id).name, rect.x + 22.0, dy + 14.0, 18.0, WHITE);
+                draw_rectangle_lines(
+                    rect.x,
+                    dy,
+                    16.0,
+                    rect.h,
+                    1.0,
+                    Color::from_rgba(0, 0, 0, 180),
+                );
+                draw_text(
+                    material::props(*id).name,
+                    rect.x + 22.0,
+                    dy + 14.0,
+                    18.0,
+                    WHITE,
+                );
             }
         }
     }
 
     // Search box drawn last so it covers any item scrolled up under it.
-    draw_rectangle(x0, 0.0, PANEL_W, LIST_TOP, Color::from_rgba(28, 28, 34, 255));
-    draw_line(x0, 0.0, x0, screen_height(), 1.0, Color::from_rgba(60, 60, 70, 255));
+    draw_rectangle(
+        x0,
+        0.0,
+        PANEL_W,
+        LIST_TOP,
+        Color::from_rgba(28, 28, 34, 255),
+    );
+    draw_line(
+        x0,
+        0.0,
+        x0,
+        screen_height(),
+        1.0,
+        Color::from_rgba(60, 60, 70, 255),
+    );
     draw_text("search (type to filter):", x0 + 8.0, 22.0, 18.0, GRAY);
-    draw_rectangle(x0 + 8.0, 28.0, PANEL_W - 16.0, 22.0, Color::from_rgba(12, 12, 16, 255));
+    draw_rectangle(
+        x0 + 8.0,
+        28.0,
+        PANEL_W - 16.0,
+        22.0,
+        Color::from_rgba(12, 12, 16, 255),
+    );
     let shown = if search.is_empty() { "_" } else { search };
     draw_text(shown, x0 + 12.0, 44.0, 18.0, WHITE);
 }
@@ -506,7 +651,17 @@ fn draw_hud(
     draw_rectangle(0.0, 0.0, 380.0, 96.0, Color::from_rgba(0, 0, 0, 110));
     line(
         0.0,
-        &format!("pwdr  {}x{}  {:.0} fps{}", gw, gh, fps, if zoom > 1.01 { format!("  {zoom:.1}x") } else { String::new() }),
+        &format!(
+            "pwdr  {}x{}  {:.0} fps{}",
+            gw,
+            gh,
+            fps,
+            if zoom > 1.01 {
+                format!("  {zoom:.1}x")
+            } else {
+                String::new()
+            }
+        ),
     );
     line(
         1.0,
@@ -517,7 +672,10 @@ fn draw_hud(
             if heat_overlay { "  [HEAT]" } else { "" }
         ),
     );
-    line(2.0, &format!("brush {}  sel: {}", brush, material::props(selected).name));
+    line(
+        2.0,
+        &format!("brush {}  sel: {}", brush, material::props(selected).name),
+    );
 
     if mx >= 0.0 && mx < sim_w && my >= 0.0 && my < sim_h {
         let gx = (view_x + mx / psc).floor() as i32;
@@ -527,7 +685,13 @@ fn draw_hud(
             let m = grid.material_at(gx, gy);
             line(
                 3.0,
-                &format!("({},{}) {}  {:.0}C", gx, gy, material::props(m).name, grid.temperature_at(gx, gy)),
+                &format!(
+                    "({},{}) {}  {:.0}C",
+                    gx,
+                    gy,
+                    material::props(m).name,
+                    grid.temperature_at(gx, gy)
+                ),
             );
         }
     }
@@ -540,12 +704,24 @@ fn draw_hud(
         Color::from_rgba(200, 200, 210, 220),
     );
     if !status.is_empty() {
-        draw_text(status, 8.0, sim_h - 8.0, 16.0, Color::from_rgba(140, 220, 140, 230));
+        draw_text(
+            status,
+            8.0,
+            sim_h - 8.0,
+            16.0,
+            Color::from_rgba(140, 220, 140, 230),
+        );
     }
 }
 
 fn draw_resize_prompt(gw: usize, gh: usize) {
-    draw_rectangle(0.0, 0.0, screen_width(), screen_height(), Color::from_rgba(0, 0, 0, 180));
+    draw_rectangle(
+        0.0,
+        0.0,
+        screen_width(),
+        screen_height(),
+        Color::from_rgba(0, 0, 0, 180),
+    );
     let (cw, ch) = (520.0, 130.0);
     let (cx, cy) = ((screen_width() - cw) * 0.5, (screen_height() - ch) * 0.5);
     draw_rectangle(cx, cy, cw, ch, Color::from_rgba(32, 32, 40, 255));

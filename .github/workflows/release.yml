@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Build & publish Windows binary
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build app (release)
+        run: cargo build -p pwdr-app --release
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/pwdr-app.exe
+          generate_release_notes: true

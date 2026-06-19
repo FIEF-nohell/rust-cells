@@ -114,7 +114,7 @@ fn ocean(g: &mut Grid) {
     rect(g, x0 + 90, top + 6, x1, floor - 4, SALTWATER); // brine on the right half
     rect(g, x0, top + 2, x1, top + 3, OIL); // floating oil slick
     rect(g, x0 + 10, floor - 2, x0 + 40, floor, MERCURY); // heavy metal puddle
-    // seaweed
+                                                          // seaweed
     for sx in (x0 + 20..x1 - 10).step_by(22) {
         vline(g, sx, floor - 18, floor - 1, PLANT);
     }
@@ -139,7 +139,7 @@ fn volcano(g: &mut Grid) {
     put(g, cx, peak + 14, CLONE); // lava fountain source (fed by surrounding lava)
     rect(g, cx - 2, peak + 18, cx + 2, peak + 26, HEATER); // magma chamber
     vline(g, cx + 7, peak + 20, base - 10, THERMITE); // thermite vein
-    // a lava lip spilling toward the sea on the right
+                                                      // a lava lip spilling toward the sea on the right
     rect(g, cx + half_at(peak + 30), peak + 28, 150, peak + 31, LAVA);
     // a few obsidian rocks where lava has met water before
     disc(g, 150, 236, 3, OBSIDIAN);
@@ -165,7 +165,7 @@ fn mountain(g: &mut Grid) {
     disc(g, cx, peak + 30, 6, CRYO); // frozen heart
     rect(g, cx - 3, peak + 44, cx + 3, peak + 50, COOLER); // ice cave
     disc(g, cx, peak + 8, 3, FROST); // frost aura at the summit
-    // waterfall: a clone fed by a water cap, pouring down the east face into the sea
+                                     // waterfall: a clone fed by a water cap, pouring down the east face into the sea
     put(g, cx + 6, peak + 12, WATER);
     put(g, cx + 7, peak + 13, CLONE);
     rect(g, cx + 8, peak + 14, cx + 9, 232, WATER); // the falling stream (settles on play)
@@ -181,7 +181,7 @@ fn house(g: &mut Grid) {
     // walls + floor
     rect(g, x0, y0, x1, y1, WOOD);
     rect(g, x0 + 2, y0 + 2, x1 - 2, y1 - 1, EMPTY); // hollow interior
-    // glass windows
+                                                    // glass windows
     rect(g, x0 + 10, y0 + 12, x0 + 20, y0 + 22, GLASS);
     rect(g, x1 - 20, y0 + 12, x1 - 10, y0 + 22, GLASS);
     // basalt roof (triangle)
@@ -198,7 +198,7 @@ fn house(g: &mut Grid) {
     hline(g, x0 + 5, x1 - 8, fy, COPPER);
     put(g, x0 + 6, fy - 1, SPARK); // a spark to kick it off on play
     rect(g, x1 - 7, fy - 3, x1 - 4, fy, LAMP); // a lamp cluster
-    // candle on a wood table
+                                               // candle on a wood table
     rect(g, x0 + 30, y1 - 6, x0 + 36, y1 - 5, WOOD);
     vline(g, x0 + 33, y1 - 12, y1 - 7, WAX);
     put(g, x0 + 33, y1 - 13, FIRE);
@@ -246,7 +246,7 @@ fn underground(g: &mut Grid) {
     rect(g, 422, 336, 438, 345, TNT);
     rect(g, 402, 330, 414, 335, NITRO);
     vline(g, 420, 250, 322, FUSE); // light the top end on the surface to detonate
-    // void drain in the corner
+                                   // void drain in the corner
     disc(g, 515, 348, 5, VOID);
 }
 

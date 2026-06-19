@@ -219,9 +219,9 @@ impl Grid {
     fn touch(&mut self, x: usize, y: usize) {
         let cx = x / CHUNK;
         let cy = y / CHUNK;
-        let on_left = x % CHUNK == 0 && cx > 0;
+        let on_left = x.is_multiple_of(CHUNK) && cx > 0;
         let on_right = x % CHUNK == CHUNK - 1 && cx + 1 < self.chunks_x;
-        let on_top = y % CHUNK == 0 && cy > 0;
+        let on_top = y.is_multiple_of(CHUNK) && cy > 0;
         let on_bot = y % CHUNK == CHUNK - 1 && cy + 1 < self.chunks_y;
 
         self.wake_chunk(cx, cy);
@@ -897,7 +897,14 @@ impl Grid {
     /// Scan `dir` (±1) up to `max` steps through cells this liquid can pass
     /// (empty/lighter). Returns the step count of the nearest column where it can
     /// also fall (cell below is displaceable), or `None` if none / path blocked.
-    fn scan_descent(&self, x: usize, y: usize, dir: isize, max: isize, mat: MaterialId) -> Option<isize> {
+    fn scan_descent(
+        &self,
+        x: usize,
+        y: usize,
+        dir: isize,
+        max: isize,
+        mat: MaterialId,
+    ) -> Option<isize> {
         for step in 1..=max {
             let nx = x as isize + dir * step;
             if !self.in_bounds(nx, y as isize) {
@@ -963,8 +970,8 @@ impl Grid {
             } else {
                 (cell.tint as i32 % (2 * j + 1)) - j
             };
-            for c in 0..3 {
-                px[c] = (p.color[c] as i32 + off).clamp(0, 255) as u8;
+            for (c, out) in px.iter_mut().enumerate().take(3) {
+                *out = (p.color[c] as i32 + off).clamp(0, 255) as u8;
             }
             px[3] = 255;
         }
@@ -1052,7 +1059,12 @@ impl Grid {
             if life > 0 {
                 transients += 1;
             }
-            g.cells[i] = Cell { material, gen, life, tint };
+            g.cells[i] = Cell {
+                material,
+                gen,
+                life,
+                tint,
+            };
         }
         for i in 0..n {
             g.temp[i] = f32::from_le_bytes(take(&mut p, 4)?.try_into().ok()?);
@@ -1108,15 +1120,27 @@ pub fn temp_color(t: f32) -> [u8; 3] {
     if t <= 20.0 {
         // 20 (grey) .. -200 (deep blue)
         let f = (20.0 - t) / 220.0;
-        [lerp(140.0, 30.0, f), lerp(140.0, 110.0, f), lerp(150.0, 255.0, f)]
+        [
+            lerp(140.0, 30.0, f),
+            lerp(140.0, 110.0, f),
+            lerp(150.0, 255.0, f),
+        ]
     } else {
         let f = ((t - 20.0) / 1180.0).clamp(0.0, 1.0); // 20..1200
         if f < 0.4 {
             let g = f / 0.4; // grey -> red
-            [lerp(140.0, 230.0, g), lerp(140.0, 40.0, g), lerp(150.0, 30.0, g)]
+            [
+                lerp(140.0, 230.0, g),
+                lerp(140.0, 40.0, g),
+                lerp(150.0, 30.0, g),
+            ]
         } else if f < 0.75 {
             let g = (f - 0.4) / 0.35; // red -> orange/yellow
-            [lerp(230.0, 255.0, g), lerp(40.0, 200.0, g), lerp(30.0, 40.0, g)]
+            [
+                lerp(230.0, 255.0, g),
+                lerp(40.0, 200.0, g),
+                lerp(30.0, 40.0, g),
+            ]
         } else {
             let g = (f - 0.75) / 0.25; // yellow -> white
             [255, lerp(200.0, 255.0, g), lerp(40.0, 255.0, g)]
@@ -1222,7 +1246,9 @@ mod tests {
         }
         assert!(g.count(SAND) > 0);
         let bottom = g.height() - 1;
-        let left: usize = (0..w / 2).filter(|&x| g.material_at(x, bottom) == SAND).count();
+        let left: usize = (0..w / 2)
+            .filter(|&x| g.material_at(x, bottom) == SAND)
+            .count();
         let right: usize = (w / 2 + 1..w)
             .filter(|&x| g.material_at(x, bottom) == SAND)
             .count();
@@ -1334,7 +1360,11 @@ mod tests {
             g.step();
         }
         assert_eq!(g.count(WATER), poured, "water conserved");
-        assert_eq!(g.awake_chunk_count(), 0, "must settle — no infinite oscillation");
+        assert_eq!(
+            g.awake_chunk_count(),
+            0,
+            "must settle — no infinite oscillation"
+        );
 
         // Bottom 4 interior rows fully filled and level.
         let floor = h - 1;
@@ -1364,7 +1394,9 @@ mod tests {
         }
         assert_eq!(g.awake_chunk_count(), 0, "settles");
         let bottom = 10;
-        let span = (0..21).filter(|&x| g.material_at(x, bottom) == WATER).count();
+        let span = (0..21)
+            .filter(|&x| g.material_at(x, bottom) == WATER)
+            .count();
         assert!(span > 3, "water spread out along the floor, span={span}");
     }
 
@@ -1626,7 +1658,10 @@ mod tests {
             }
         }
         assert!(g.count(OIL) < oil0 / 4, "most oil burned: {}", g.count(OIL));
-        assert!(saw_smoke, "combustion emitted smoke (byproduct) during the burn");
+        assert!(
+            saw_smoke,
+            "combustion emitted smoke (byproduct) during the burn"
+        );
     }
 
     #[test]
@@ -1762,7 +1797,7 @@ mod tests {
         }
         let gp0 = g.count(GUNPOWDER);
         g.set(5, 8, FIRE); // ignite at the edge
-        // A couple of ticks lets the chain finish.
+                           // A couple of ticks lets the chain finish.
         for _ in 0..4 {
             g.step();
         }
@@ -1947,11 +1982,7 @@ mod tests {
             a.step();
             b.step_parallel();
             assert_eq!(a.hash(), b.hash(), "cell hash diverged at tick {tick}");
-            assert_eq!(
-                a.cells(),
-                b.cells(),
-                "cells diverged at tick {tick}"
-            );
+            assert_eq!(a.cells(), b.cells(), "cells diverged at tick {tick}");
             // temperature field identical too
             for i in 0..a.cells().len() {
                 let (ta, tb) = (a.temp[i], b.temp[i]);
@@ -2101,7 +2132,11 @@ mod tests {
         for _ in 0..50 {
             g.step();
         }
-        assert_eq!(g.material_at(x, y), COPPER, "conductor never melts from heat");
+        assert_eq!(
+            g.material_at(x, y),
+            COPPER,
+            "conductor never melts from heat"
+        );
     }
 
     // --- electronics / explosives / materials / heat-source tests ---
@@ -2153,7 +2188,10 @@ mod tests {
             g.step();
             max_lit = max_lit.max(g.count(LITLAMP));
         }
-        assert!(max_lit > total / 2, "lit lamp chained through the array: {max_lit}/{total}");
+        assert!(
+            max_lit > total / 2,
+            "lit lamp chained through the array: {max_lit}/{total}"
+        );
     }
 
     #[test]
@@ -2232,7 +2270,10 @@ mod tests {
         };
         let nitro = fire_after(NITRO);
         let gp = fire_after(crate::material::GUNPOWDER);
-        assert!(nitro > gp, "nitro blast ({nitro}) bigger than gunpowder ({gp})");
+        assert!(
+            nitro > gp,
+            "nitro blast ({nitro}) bigger than gunpowder ({gp})"
+        );
     }
 
     #[test]
@@ -2282,7 +2323,10 @@ mod tests {
         }
         let left = g.count(COAL);
         assert!(left < coal0, "coal caught fire");
-        assert!(left > 0, "coal still smouldering after 30 ticks (slow burn): {left}");
+        assert!(
+            left > 0,
+            "coal still smouldering after 30 ticks (slow burn): {left}"
+        );
     }
 
     #[test]
@@ -2322,13 +2366,21 @@ mod tests {
         for _ in 0..120 {
             hg.step();
         }
-        assert!(hg.temperature_at(1, 0) > 100.0, "heater warmed neighbour: {}", hg.temperature_at(1, 0));
+        assert!(
+            hg.temperature_at(1, 0) > 100.0,
+            "heater warmed neighbour: {}",
+            hg.temperature_at(1, 0)
+        );
 
         let (mut cg, _, _) = boxed(COOLER, -60.0);
         for _ in 0..120 {
             cg.step();
         }
-        assert!(cg.temperature_at(1, 0) < 0.0, "cooler chilled neighbour: {}", cg.temperature_at(1, 0));
+        assert!(
+            cg.temperature_at(1, 0) < 0.0,
+            "cooler chilled neighbour: {}",
+            cg.temperature_at(1, 0)
+        );
     }
 
     #[test]
@@ -2342,7 +2394,11 @@ mod tests {
         for _ in 0..300 {
             g.step();
         }
-        assert_eq!(g.hash(), GOLDEN_M2, "golden mismatch — see regeneration note");
+        assert_eq!(
+            g.hash(),
+            GOLDEN_M2,
+            "golden mismatch — see regeneration note"
+        );
     }
 
     // Regenerate: temporarily `assert_eq!(g.hash(), 0)` and read the panic msg.

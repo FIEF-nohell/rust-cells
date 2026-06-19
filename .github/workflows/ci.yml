@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  core:
+    name: core — test & lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy (core)
+        run: cargo clippy -p pwdr-core -- -D warnings
+      - name: Test (core)
+        run: cargo test -p pwdr-core --verbose
+      - name: Build (core, release)
+        run: cargo build -p pwdr-core --release
+
+  app:
+    name: app — Windows build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build app (release)
+        run: cargo build -p pwdr-app --release
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwdr-windows
+          path: target/release/pwdr-app.exe

@@ -566,7 +566,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         default_temp: 20.0,
         conductivity: 0.12,
         high_temp: 100.0,
-        high_to: STEAM, // boils (salt left behind is abstracted away)
+        high_to: STEAM,       // boils (salt left behind is abstracted away)
         low_temp: NEVER_COLD, // freezing-point depression: stays liquid
         low_to: EMPTY,
     },
@@ -688,7 +688,7 @@ pub static MATERIALS: &[MaterialProps] = &[
     MaterialProps {
         name: "Mercury",
         phase: Phase::Liquid, // dense liquid metal; excellent heat conductor
-        density: 13500, // sinks through everything
+        density: 13500,       // sinks through everything
         color: [185, 185, 195],
         color_jitter: 10,
         dispersion: 3,
@@ -863,66 +863,346 @@ pub struct Reaction {
 /// the engine just walks this table.
 pub static REACTIONS: &[Reaction] = &[
     // Combustion: fire spreads into oil; oil becomes more fire.
-    Reaction { a: FIRE, b: OIL, a_to: FIRE, b_to: FIRE, prob: 0.5, min_temp: NEVER_COLD },
+    Reaction {
+        a: FIRE,
+        b: OIL,
+        a_to: FIRE,
+        b_to: FIRE,
+        prob: 0.5,
+        min_temp: NEVER_COLD,
+    },
     // Fire is quenched by water (and flashes the water to steam).
-    Reaction { a: FIRE, b: WATER, a_to: SMOKE, b_to: STEAM, prob: 0.4, min_temp: NEVER_COLD },
+    Reaction {
+        a: FIRE,
+        b: WATER,
+        a_to: SMOKE,
+        b_to: STEAM,
+        prob: 0.4,
+        min_temp: NEVER_COLD,
+    },
     // Conduction: a spark energizes adjacent copper; charged copper propagates
     // the charge along the wire (the Charged->Cooled->Copper trail prevents the
     // wave from bouncing backward).
-    Reaction { a: SPARK, b: COPPER, a_to: SPARK, b_to: CHARGED, prob: 1.0, min_temp: NEVER_COLD },
-    Reaction { a: CHARGED, b: COPPER, a_to: CHARGED, b_to: CHARGED, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction {
+        a: SPARK,
+        b: COPPER,
+        a_to: SPARK,
+        b_to: CHARGED,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: CHARGED,
+        b: COPPER,
+        a_to: CHARGED,
+        b_to: CHARGED,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
     // Sparks and live wires ignite adjacent fuel.
-    Reaction { a: SPARK, b: OIL, a_to: SPARK, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
-    Reaction { a: CHARGED, b: OIL, a_to: CHARGED, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction {
+        a: SPARK,
+        b: OIL,
+        a_to: SPARK,
+        b_to: FIRE,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: CHARGED,
+        b: OIL,
+        a_to: CHARGED,
+        b_to: FIRE,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
     // Corrosion: acid dissolves materials and is consumed in the process.
-    Reaction { a: ACID, b: WATER, a_to: EMPTY, b_to: EMPTY, prob: 0.15, min_temp: NEVER_COLD },
-    Reaction { a: ACID, b: SAND, a_to: EMPTY, b_to: EMPTY, prob: 0.20, min_temp: NEVER_COLD },
-    Reaction { a: ACID, b: STONE, a_to: EMPTY, b_to: EMPTY, prob: 0.10, min_temp: NEVER_COLD },
-    Reaction { a: ACID, b: COPPER, a_to: EMPTY, b_to: EMPTY, prob: 0.12, min_temp: NEVER_COLD },
-    Reaction { a: ACID, b: BASALT, a_to: EMPTY, b_to: EMPTY, prob: 0.08, min_temp: NEVER_COLD },
-    Reaction { a: ACID, b: WOOD, a_to: EMPTY, b_to: EMPTY, prob: 0.15, min_temp: NEVER_COLD },
+    Reaction {
+        a: ACID,
+        b: WATER,
+        a_to: EMPTY,
+        b_to: EMPTY,
+        prob: 0.15,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: ACID,
+        b: SAND,
+        a_to: EMPTY,
+        b_to: EMPTY,
+        prob: 0.20,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: ACID,
+        b: STONE,
+        a_to: EMPTY,
+        b_to: EMPTY,
+        prob: 0.10,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: ACID,
+        b: COPPER,
+        a_to: EMPTY,
+        b_to: EMPTY,
+        prob: 0.12,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: ACID,
+        b: BASALT,
+        a_to: EMPTY,
+        b_to: EMPTY,
+        prob: 0.08,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: ACID,
+        b: WOOD,
+        a_to: EMPTY,
+        b_to: EMPTY,
+        prob: 0.15,
+        min_temp: NEVER_COLD,
+    },
     // Flammable gas: fire and sparks propagate through fume.
-    Reaction { a: FIRE, b: FUME, a_to: FIRE, b_to: FIRE, prob: 0.7, min_temp: NEVER_COLD },
-    Reaction { a: SPARK, b: FUME, a_to: SPARK, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
-    Reaction { a: CHARGED, b: FUME, a_to: CHARGED, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction {
+        a: FIRE,
+        b: FUME,
+        a_to: FIRE,
+        b_to: FIRE,
+        prob: 0.7,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: SPARK,
+        b: FUME,
+        a_to: SPARK,
+        b_to: FIRE,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: CHARGED,
+        b: FUME,
+        a_to: CHARGED,
+        b_to: FIRE,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
     // Flammable solid: fire creeps along wood (every direction, not just up).
-    Reaction { a: FIRE, b: WOOD, a_to: FIRE, b_to: FIRE, prob: 0.20, min_temp: NEVER_COLD },
-    Reaction { a: SPARK, b: WOOD, a_to: SPARK, b_to: FIRE, prob: 0.5, min_temp: NEVER_COLD },
-    Reaction { a: CHARGED, b: WOOD, a_to: CHARGED, b_to: FIRE, prob: 0.5, min_temp: NEVER_COLD },
+    Reaction {
+        a: FIRE,
+        b: WOOD,
+        a_to: FIRE,
+        b_to: FIRE,
+        prob: 0.20,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: SPARK,
+        b: WOOD,
+        a_to: SPARK,
+        b_to: FIRE,
+        prob: 0.5,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: CHARGED,
+        b: WOOD,
+        a_to: CHARGED,
+        b_to: FIRE,
+        prob: 0.5,
+        min_temp: NEVER_COLD,
+    },
     // Lava ignites everything flammable it touches (it's 1200 degrees).
-    Reaction { a: LAVA, b: OIL, a_to: LAVA, b_to: FIRE, prob: 0.6, min_temp: NEVER_COLD },
-    Reaction { a: LAVA, b: WOOD, a_to: LAVA, b_to: FIRE, prob: 0.25, min_temp: NEVER_COLD },
-    Reaction { a: LAVA, b: FUME, a_to: LAVA, b_to: FIRE, prob: 0.6, min_temp: NEVER_COLD },
+    Reaction {
+        a: LAVA,
+        b: OIL,
+        a_to: LAVA,
+        b_to: FIRE,
+        prob: 0.6,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: LAVA,
+        b: WOOD,
+        a_to: LAVA,
+        b_to: FIRE,
+        prob: 0.25,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: LAVA,
+        b: FUME,
+        a_to: LAVA,
+        b_to: FIRE,
+        prob: 0.6,
+        min_temp: NEVER_COLD,
+    },
     // Cold source: cryo freezes adjacent water regardless of its own temperature.
-    Reaction { a: CRYO, b: WATER, a_to: CRYO, b_to: ICE, prob: 0.30, min_temp: NEVER_COLD },
+    Reaction {
+        a: CRYO,
+        b: WATER,
+        a_to: CRYO,
+        b_to: ICE,
+        prob: 0.30,
+        min_temp: NEVER_COLD,
+    },
     // Salt dissolves water into brine (consumed) and melts ice into brine, which
     // does not refreeze — so salt genuinely thaws ice.
-    Reaction { a: SALT, b: WATER, a_to: EMPTY, b_to: SALTWATER, prob: 0.25, min_temp: NEVER_COLD },
-    Reaction { a: SALT, b: ICE, a_to: SALTWATER, b_to: SALTWATER, prob: 0.50, min_temp: NEVER_COLD },
+    Reaction {
+        a: SALT,
+        b: WATER,
+        a_to: EMPTY,
+        b_to: SALTWATER,
+        prob: 0.25,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: SALT,
+        b: ICE,
+        a_to: SALTWATER,
+        b_to: SALTWATER,
+        prob: 0.50,
+        min_temp: NEVER_COLD,
+    },
     // Plant creeps along water and burns readily.
-    Reaction { a: PLANT, b: WATER, a_to: PLANT, b_to: PLANT, prob: 0.06, min_temp: NEVER_COLD },
-    Reaction { a: FIRE, b: PLANT, a_to: FIRE, b_to: FIRE, prob: 0.35, min_temp: NEVER_COLD },
-    Reaction { a: LAVA, b: PLANT, a_to: LAVA, b_to: FIRE, prob: 0.7, min_temp: NEVER_COLD },
+    Reaction {
+        a: PLANT,
+        b: WATER,
+        a_to: PLANT,
+        b_to: PLANT,
+        prob: 0.06,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: FIRE,
+        b: PLANT,
+        a_to: FIRE,
+        b_to: FIRE,
+        prob: 0.35,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: LAVA,
+        b: PLANT,
+        a_to: LAVA,
+        b_to: FIRE,
+        prob: 0.7,
+        min_temp: NEVER_COLD,
+    },
     // Thermite flashes to molten slag on contact with fire/spark/lava.
-    Reaction { a: FIRE, b: THERMITE, a_to: FIRE, b_to: LAVA, prob: 0.6, min_temp: NEVER_COLD },
-    Reaction { a: SPARK, b: THERMITE, a_to: CHARGED, b_to: LAVA, prob: 1.0, min_temp: NEVER_COLD },
-    Reaction { a: LAVA, b: THERMITE, a_to: LAVA, b_to: LAVA, prob: 0.5, min_temp: NEVER_COLD },
+    Reaction {
+        a: FIRE,
+        b: THERMITE,
+        a_to: FIRE,
+        b_to: LAVA,
+        prob: 0.6,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: SPARK,
+        b: THERMITE,
+        a_to: CHARGED,
+        b_to: LAVA,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: LAVA,
+        b: THERMITE,
+        a_to: LAVA,
+        b_to: LAVA,
+        prob: 0.5,
+        min_temp: NEVER_COLD,
+    },
     // Electronics: a live wire (charge/spark) lights an adjacent lamp, and a lit
     // lamp lights its neighbours — so a lamp array all glows together.
-    Reaction { a: CHARGED, b: LAMP, a_to: CHARGED, b_to: LITLAMP, prob: 1.0, min_temp: NEVER_COLD },
-    Reaction { a: SPARK, b: LAMP, a_to: SPARK, b_to: LITLAMP, prob: 1.0, min_temp: NEVER_COLD },
-    Reaction { a: LITLAMP, b: LAMP, a_to: LITLAMP, b_to: LITLAMP, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction {
+        a: CHARGED,
+        b: LAMP,
+        a_to: CHARGED,
+        b_to: LITLAMP,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: SPARK,
+        b: LAMP,
+        a_to: SPARK,
+        b_to: LITLAMP,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: LITLAMP,
+        b: LAMP,
+        a_to: LITLAMP,
+        b_to: LITLAMP,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
     // Fuse: a steady self-propagating burn travels the cord reliably.
-    Reaction { a: FIRE, b: FUSE, a_to: FIRE, b_to: BURNFUSE, prob: 1.0, min_temp: NEVER_COLD },
-    Reaction { a: BURNFUSE, b: FUSE, a_to: BURNFUSE, b_to: BURNFUSE, prob: 0.5, min_temp: NEVER_COLD },
-    Reaction { a: SPARK, b: FUSE, a_to: SPARK, b_to: BURNFUSE, prob: 1.0, min_temp: NEVER_COLD },
-    Reaction { a: CHARGED, b: FUSE, a_to: CHARGED, b_to: BURNFUSE, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction {
+        a: FIRE,
+        b: FUSE,
+        a_to: FIRE,
+        b_to: BURNFUSE,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: BURNFUSE,
+        b: FUSE,
+        a_to: BURNFUSE,
+        b_to: BURNFUSE,
+        prob: 0.5,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: SPARK,
+        b: FUSE,
+        a_to: SPARK,
+        b_to: BURNFUSE,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
+    Reaction {
+        a: CHARGED,
+        b: FUSE,
+        a_to: CHARGED,
+        b_to: BURNFUSE,
+        prob: 1.0,
+        min_temp: NEVER_COLD,
+    },
     // Hydrogen: ignites readily (and detonates via the blast hook).
-    Reaction { a: FIRE, b: HYDROGEN, a_to: FIRE, b_to: FIRE, prob: 0.9, min_temp: NEVER_COLD },
+    Reaction {
+        a: FIRE,
+        b: HYDROGEN,
+        a_to: FIRE,
+        b_to: FIRE,
+        prob: 0.9,
+        min_temp: NEVER_COLD,
+    },
     // Coal: smoulders — fire creeps slowly, so a coal bed burns for a long time.
-    Reaction { a: FIRE, b: COAL, a_to: FIRE, b_to: FIRE, prob: 0.03, min_temp: NEVER_COLD },
+    Reaction {
+        a: FIRE,
+        b: COAL,
+        a_to: FIRE,
+        b_to: FIRE,
+        prob: 0.03,
+        min_temp: NEVER_COLD,
+    },
     // Quench: lava meeting water sometimes flash-freezes to obsidian (+ steam).
-    Reaction { a: LAVA, b: WATER, a_to: OBSIDIAN, b_to: STEAM, prob: 0.25, min_temp: NEVER_COLD },
+    Reaction {
+        a: LAVA,
+        b: WATER,
+        a_to: OBSIDIAN,
+        b_to: STEAM,
+        prob: 0.25,
+        min_temp: NEVER_COLD,
+    },
 ];
 
 /// First reaction matching `(a, b)`, if any. Linear scan — the table is small.
@@ -963,6 +1243,8 @@ mod tests {
         // The diffusion pass clamps the per-cell total edge weight to <= 1, so any
         // conductivity in [0, 1] is stable. Conductors use up to ~0.5 (fast
         // conduction through thin structures); insulators stay low.
-        assert!(MATERIALS.iter().all(|m| m.conductivity >= 0.0 && m.conductivity <= 1.0));
+        assert!(MATERIALS
+            .iter()
+            .all(|m| m.conductivity >= 0.0 && m.conductivity <= 1.0));
     }
 }

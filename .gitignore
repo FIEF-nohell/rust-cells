@@ -1,4 +1,15 @@
+# Build artifacts
 /target
-desktop.ini
+
+# Saved maps (user data)
 *.save
-*.exe
+
+# OS cruft
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# Editor
+*.swp
+.idea/
+.vscode/

@@ -9,9 +9,9 @@
 //! refined accordingly in later test additions; movement alone is strictly
 //! conservative.
 
+use proptest::prelude::*;
 use pwdr_core::material::{self, MaterialId, EMPTY};
 use pwdr_core::Grid;
-use proptest::prelude::*;
 
 fn nonempty(g: &Grid) -> usize {
     g.cells().iter().filter(|c| c.material != EMPTY).count()

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="22" fill="#18182a"/>
+  <!-- water pool (bottom-left) -->
+  <path d="M8 116 L8 86 Q34 80 52 92 L52 116 Z" fill="#2a60cd"/>
+  <!-- sand mound (right hill) -->
+  <path d="M34 116 Q60 56 86 116 Z" fill="#c9b670"/>
+  <path d="M86 116 Q104 84 120 116 Z" fill="#bda864"/>
+  <!-- falling grain stream -->
+  <g fill="#c9b670">
+    <rect x="60" y="34" width="7" height="7"/>
+    <rect x="60" y="48" width="7" height="7"/>
+    <rect x="60" y="62" width="7" height="7"/>
+  </g>
+  <!-- fire ember (top-right) -->
+  <circle cx="96" cy="30" r="11" fill="#ff8c2a"/>
+  <circle cx="96" cy="30" r="5" fill="#ffd27a"/>
+</svg>
