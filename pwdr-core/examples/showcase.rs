@@ -157,11 +157,12 @@ fn mountain(g: &mut Grid) {
         let half = (y - peak) / 2 + 2;
         hline(g, cx - half, cx + half, y, STONE);
     }
-    // ice cap
+    // ice cap, dusted with snow at the very top
     for y in peak..peak + 22 {
         let half = (y - peak) / 2 + 2;
         hline(g, cx - half, cx + half, y, ICE);
     }
+    disc(g, cx, peak + 2, 4, SNOW); // snow cap
     disc(g, cx, peak + 30, 6, CRYO); // frozen heart
     rect(g, cx - 3, peak + 44, cx + 3, peak + 50, COOLER); // ice cave
     disc(g, cx, peak + 8, 3, FROST); // frost aura at the summit
@@ -203,7 +204,8 @@ fn house(g: &mut Grid) {
     vline(g, x0 + 33, y1 - 12, y1 - 7, WAX);
     put(g, x0 + 33, y1 - 13, FIRE);
     put(g, x0 + 33, y1 - 11, MELTWAX);
-    // fridge + furnace appliances
+    rect(g, x0 + 30, y1 - 4, x0 + 37, y1 - 2, ASH); // ash bed under the candle
+                                                    // fridge + furnace appliances
     rect(g, x0 + 4, y1 - 14, x0 + 8, y1 - 6, COOLER);
     rect(g, x1 - 8, y1 - 14, x1 - 4, y1 - 6, HEATER);
 }
@@ -223,6 +225,8 @@ fn sky(g: &mut Grid) {
     disc(g, 480, 55, 12, HYDROGEN);
     vline(g, 480, 68, 86, FUSE);
     rect(g, 477, 86, 483, 90, WOOD);
+    // a pocket of pure oxygen drifting in the sky (combustion accelerant)
+    disc(g, 150, 30, 7, OXYGEN);
 }
 
 /// Underground: a coal seam, an acid cavern, a bomb cache wired to a surface

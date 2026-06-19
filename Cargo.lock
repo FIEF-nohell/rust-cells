@@ -1270,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "pwdr-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "macroquad",
  "pwdr-core",
@@ -1280,7 +1280,7 @@ dependencies = [
 
 [[package]]
 name = "pwdr-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "proptest",

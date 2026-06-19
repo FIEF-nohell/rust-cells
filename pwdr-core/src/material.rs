@@ -93,6 +93,9 @@ pub const OBSIDIAN: MaterialId = 40;
 pub const HEATER: MaterialId = 41;
 pub const COOLER: MaterialId = 42;
 pub const BURNFUSE: MaterialId = 43;
+pub const SNOW: MaterialId = 44;
+pub const ASH: MaterialId = 45;
+pub const OXYGEN: MaterialId = 46;
 
 const NEVER_HOT: f32 = f32::INFINITY;
 const NEVER_COLD: f32 = f32::NEG_INFINITY;
@@ -806,9 +809,57 @@ pub static MATERIALS: &[MaterialProps] = &[
         color_jitter: 30,
         dispersion: 0,
         life: 8,
-        decay_to: EMPTY,
+        decay_to: ASH, // leaves a burnt-ash trail
         default_temp: 500.0,
         conductivity: 0.10,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Snow",
+        phase: Phase::Powder, // light, cold; melts to water when it warms up
+        density: 400,
+        color: [236, 240, 250],
+        color_jitter: 8,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: -5.0,
+        conductivity: 0.10,
+        high_temp: 2.0,
+        high_to: WATER, // melts
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Ash",
+        phase: Phase::Powder, // inert, light byproduct of burning
+        density: 700,
+        color: [92, 90, 96],
+        color_jitter: 16,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.05,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Oxygen",
+        phase: Phase::Gas, // combustion accelerant; makes fire roar
+        density: -30,
+        color: [150, 200, 255],
+        color_jitter: 10,
+        dispersion: 6,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.04,
         high_temp: NEVER_HOT,
         high_to: EMPTY,
         low_temp: NEVER_COLD,
@@ -1183,6 +1234,15 @@ pub static REACTIONS: &[Reaction] = &[
         a_to: FIRE,
         b_to: FIRE,
         prob: 0.9,
+        min_temp: NEVER_COLD,
+    },
+    // Oxygen: a combustion accelerant — fire tears straight through it.
+    Reaction {
+        a: FIRE,
+        b: OXYGEN,
+        a_to: FIRE,
+        b_to: FIRE,
+        prob: 0.95,
         min_temp: NEVER_COLD,
     },
     // Coal: smoulders — fire creeps slowly, so a coal bed burns for a long time.

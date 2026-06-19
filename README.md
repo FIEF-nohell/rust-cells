@@ -18,7 +18,7 @@ and the simulation core knows nothing about graphics.
 
 ## What it does
 
-- 40+ elements across five phases, with a reaction web: combustion, conduction, corrosion,
+- 45+ elements across five phases, with a reaction web: combustion, conduction, corrosion,
   freezing, melting, condensation, quenching, and chain explosions.
 - A pure simulation core (`pwdr-core`) with zero graphics dependencies, so it can be tested
   headlessly.
@@ -61,9 +61,9 @@ to life.
 
 | Phase | Elements |
 |-------|----------|
-| Powders | Sand, Gunpowder, Salt, Thermite |
+| Powders | Sand, Gunpowder, Salt, Thermite, Snow, Ash |
 | Liquids | Water, Oil (floats), Saltwater (brine), Lava, Acid, Nitro, Mercury, Molten Wax |
-| Gases | Smoke, Steam, Fire, Fume, Hydrogen, Plasma, Frost |
+| Gases | Smoke, Steam, Fire, Fume, Hydrogen, Oxygen, Plasma, Frost |
 | Solids | Stone, Ice, Basalt, Obsidian, Glass, Wood, Plant, Conductor, Cryo, Wax, Coal, TNT, Battery, Lamp, Fuse, Heater, Cooler, Clone, Void |
 
 Some interactions that fall out of the data-driven rules:

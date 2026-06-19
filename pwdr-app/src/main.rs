@@ -11,9 +11,43 @@ use pwdr_core::Grid;
 use std::time::Instant;
 
 const SCALE: f32 = 3.0; // screen pixels per cell
-const PANEL_W: f32 = 240.0;
+const PANEL_W: f32 = 248.0;
 const SEED: u64 = 0xC0FFEE;
 const MAX_BRUSH: usize = 64;
+/// Y where the scrollable element list begins (below the panel header).
+const PANEL_LIST_TOP: f32 = 96.0;
+
+// --- theme (a calm dark slate with a warm amber accent) ---
+fn col(r: u8, g: u8, b: u8) -> Color {
+    Color::from_rgba(r, g, b, 255)
+}
+fn cola(r: u8, g: u8, b: u8, a: u8) -> Color {
+    Color::from_rgba(r, g, b, a)
+}
+fn c_bg() -> Color {
+    col(15, 16, 21)
+}
+fn c_panel() -> Color {
+    col(23, 25, 32)
+}
+fn c_header() -> Color {
+    col(17, 18, 24)
+}
+fn c_accent() -> Color {
+    col(240, 172, 76)
+}
+fn c_text() -> Color {
+    col(223, 226, 233)
+}
+fn c_muted() -> Color {
+    col(132, 137, 152)
+}
+fn c_row_sel() -> Color {
+    col(40, 43, 55)
+}
+fn c_hover() -> Color {
+    col(32, 34, 44)
+}
 
 /// A path on the user's Desktop (so saves are easy to find).
 fn desktop_path(name: &str) -> std::path::PathBuf {
@@ -416,7 +450,7 @@ async fn main() {
         image.get_image_data_mut().copy_from_slice(rgba_chunks(fb));
         texture.update(&image);
 
-        clear_background(Color::from_rgba(18, 18, 22, 255));
+        clear_background(c_bg());
         // Zoomed view: scale the whole grid texture and offset to the view origin.
         // The panel (drawn after) hides any overflow on the right.
         draw_texture_ex(
@@ -478,7 +512,7 @@ async fn main() {
             );
         }
 
-        draw_palette(&palette, selected, &search, panel_x, palette_scroll);
+        draw_palette(&palette, selected, &search, panel_x, palette_scroll, mx, my);
         draw_hud(
             &grid,
             gw,
@@ -513,9 +547,9 @@ enum PaletteItem {
 /// the total content height (for clamping the scroll offset).
 fn build_palette(search: &str, x0: f32) -> (Vec<PaletteItem>, f32) {
     let mut items = Vec::new();
-    let pad = 8.0;
-    let row_h = 22.0;
-    let mut y = 56.0;
+    let pad = 10.0;
+    let row_h = 23.0;
+    let mut y = PANEL_LIST_TOP + 6.0;
     for (phase, label) in PHASE_ORDER {
         let mats: Vec<MaterialId> = (1..material::MATERIALS.len() as MaterialId)
             .filter(|&id| material::user_paintable(id))
@@ -543,90 +577,94 @@ fn build_palette(search: &str, x0: f32) -> (Vec<PaletteItem>, f32) {
     (items, y)
 }
 
-fn draw_palette(palette: &[PaletteItem], selected: MaterialId, search: &str, x0: f32, scroll: f32) {
-    const LIST_TOP: f32 = 54.0; // below the search box; items above this are clipped
-    draw_rectangle(
-        x0,
-        0.0,
-        PANEL_W,
-        screen_height(),
-        Color::from_rgba(28, 28, 34, 255),
-    );
+#[allow(clippy::too_many_arguments)]
+fn draw_palette(
+    palette: &[PaletteItem],
+    selected: MaterialId,
+    search: &str,
+    x0: f32,
+    scroll: f32,
+    mx: f32,
+    my: f32,
+) {
+    let h = screen_height();
+    draw_rectangle(x0, 0.0, PANEL_W, h, c_panel());
 
     for item in palette {
         match item {
             PaletteItem::Header(label, y) => {
                 let dy = y - scroll;
-                if dy + 15.0 >= LIST_TOP && dy < screen_height() {
-                    draw_text(
-                        label,
-                        x0 + 8.0,
-                        dy + 15.0,
-                        16.0,
-                        Color::from_rgba(150, 150, 165, 255),
-                    );
+                if dy + 16.0 >= PANEL_LIST_TOP && dy < h {
+                    draw_text(label, x0 + 12.0, dy + 15.0, 15.0, c_accent());
                 }
             }
             PaletteItem::Mat(id, rect) => {
                 let dy = rect.y - scroll;
-                if dy + rect.h < LIST_TOP || dy > screen_height() {
+                if dy + rect.h < PANEL_LIST_TOP || dy > h {
                     continue;
                 }
+                let hovered = mx >= x0 && my >= dy && my < dy + rect.h;
                 if *id == selected {
-                    draw_rectangle(
-                        rect.x - 2.0,
-                        dy - 1.0,
-                        rect.w + 4.0,
-                        rect.h + 2.0,
-                        Color::from_rgba(80, 80, 100, 255),
-                    );
+                    draw_rectangle(x0, dy - 1.0, PANEL_W, rect.h + 2.0, c_row_sel());
+                    draw_rectangle(x0, dy - 1.0, 3.0, rect.h + 2.0, c_accent());
+                } else if hovered {
+                    draw_rectangle(x0, dy - 1.0, PANEL_W, rect.h + 2.0, c_hover());
                 }
-                draw_rectangle(rect.x, dy, 16.0, rect.h, swatch(*id));
+                // swatch chip
+                draw_rectangle(rect.x, dy + 2.0, 16.0, rect.h - 4.0, swatch(*id));
                 draw_rectangle_lines(
                     rect.x,
-                    dy,
+                    dy + 2.0,
                     16.0,
-                    rect.h,
+                    rect.h - 4.0,
                     1.0,
-                    Color::from_rgba(0, 0, 0, 180),
+                    cola(0, 0, 0, 150),
                 );
+                let tcol = if *id == selected {
+                    c_text()
+                } else {
+                    col(200, 204, 214)
+                };
                 draw_text(
                     material::props(*id).name,
-                    rect.x + 22.0,
-                    dy + 14.0,
-                    18.0,
-                    WHITE,
+                    rect.x + 24.0,
+                    dy + 15.0,
+                    17.0,
+                    tcol,
                 );
             }
         }
     }
 
-    // Search box drawn last so it covers any item scrolled up under it.
-    draw_rectangle(
-        x0,
-        0.0,
-        PANEL_W,
-        LIST_TOP,
-        Color::from_rgba(28, 28, 34, 255),
-    );
+    // Header (title + search) drawn last so it covers items scrolled under it.
+    draw_rectangle(x0, 0.0, PANEL_W, PANEL_LIST_TOP, c_header());
+    draw_rectangle(x0, 0.0, PANEL_W, 3.0, c_accent()); // top accent strip
+    draw_line(x0, 0.0, x0, h, 1.0, col(48, 51, 63));
     draw_line(
         x0,
-        0.0,
-        x0,
-        screen_height(),
+        PANEL_LIST_TOP,
+        x0 + PANEL_W,
+        PANEL_LIST_TOP,
         1.0,
-        Color::from_rgba(60, 60, 70, 255),
+        col(48, 51, 63),
     );
-    draw_text("search (type to filter):", x0 + 8.0, 22.0, 18.0, GRAY);
-    draw_rectangle(
-        x0 + 8.0,
-        28.0,
-        PANEL_W - 16.0,
-        22.0,
-        Color::from_rgba(12, 12, 16, 255),
-    );
-    let shown = if search.is_empty() { "_" } else { search };
-    draw_text(shown, x0 + 12.0, 44.0, 18.0, WHITE);
+
+    draw_text("rust-cells", x0 + 12.0, 30.0, 26.0, c_text());
+    draw_text("powder sandbox", x0 + 13.0, 47.0, 14.0, c_muted());
+
+    // search field
+    draw_rectangle(x0 + 12.0, 60.0, PANEL_W - 24.0, 26.0, col(12, 13, 18));
+    let border = if search.is_empty() {
+        col(48, 51, 63)
+    } else {
+        c_accent()
+    };
+    draw_rectangle_lines(x0 + 12.0, 60.0, PANEL_W - 24.0, 26.0, 1.0, border);
+    if search.is_empty() {
+        draw_text("search…", x0 + 18.0, 78.0, 16.0, c_muted());
+    } else {
+        draw_text(search, x0 + 18.0, 78.0, 16.0, c_text());
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -650,71 +688,100 @@ fn draw_hud(
     sim_w: f32,
     sim_h: f32,
 ) {
-    let line = |i: f32, s: &str| draw_text(s, 8.0, 18.0 + i * 18.0, 18.0, WHITE);
+    // --- top-left status card ---
+    let (cx, cy, cw, ch) = (10.0, 10.0, 232.0, 82.0);
+    draw_rectangle(cx, cy, cw, ch, cola(14, 15, 20, 220));
+    draw_rectangle(cx, cy, 3.0, ch, c_accent());
+    draw_rectangle_lines(cx, cy, cw, ch, 1.0, cola(70, 74, 90, 200));
 
-    draw_rectangle(0.0, 0.0, 380.0, 96.0, Color::from_rgba(0, 0, 0, 110));
-    line(
-        0.0,
+    let tx = cx + 12.0;
+    draw_text("rust-cells", tx, cy + 22.0, 22.0, c_text());
+    let state = if paused { "PAUSED" } else { "LIVE" };
+    let state_col = if paused {
+        c_accent()
+    } else {
+        col(120, 210, 140)
+    };
+    draw_text(state, cx + cw - 64.0, cy + 20.0, 18.0, state_col);
+
+    draw_text(
         &format!(
-            "rust-cells  {}x{}  {:.0} fps{}",
+            "{}x{}   {:.0} fps   {:.2} ms{}",
             gw,
             gh,
             fps,
+            tick_ms,
             if zoom > 1.01 {
-                format!("  {zoom:.1}x")
+                format!("   {zoom:.1}x")
             } else {
                 String::new()
             }
         ),
-    );
-    line(
-        1.0,
-        &format!(
-            "tick {:.2} ms  {}{}",
-            tick_ms,
-            if paused { "PAUSED" } else { "running" },
-            if heat_overlay { "  [HEAT]" } else { "" }
-        ),
-    );
-    line(
-        2.0,
-        &format!("brush {}  sel: {}", brush, material::props(selected).name),
+        tx,
+        cy + 42.0,
+        15.0,
+        c_muted(),
     );
 
+    // selected element + a small swatch chip
+    draw_rectangle(tx, cy + 50.0, 12.0, 12.0, swatch(selected));
+    draw_rectangle_lines(tx, cy + 50.0, 12.0, 12.0, 1.0, cola(0, 0, 0, 150));
+    draw_text(
+        &format!(
+            "{}   brush {}{}",
+            material::props(selected).name,
+            brush,
+            if heat_overlay { "   HEAT" } else { "" }
+        ),
+        tx + 18.0,
+        cy + 60.0,
+        15.0,
+        c_text(),
+    );
+
+    // cursor readout (under the card)
     if mx >= 0.0 && mx < sim_w && my >= 0.0 && my < sim_h {
         let gx = (view_x + mx / psc).floor() as i32;
         let gy = (view_y + my / psc).floor() as i32;
         if gx >= 0 && gy >= 0 && (gx as usize) < grid.width() && (gy as usize) < grid.height() {
             let (gx, gy) = (gx as usize, gy as usize);
             let m = grid.material_at(gx, gy);
-            line(
-                3.0,
+            draw_text(
                 &format!(
-                    "({},{}) {}  {:.0}C",
+                    "({}, {})  {}  {:.0}C",
                     gx,
                     gy,
                     material::props(m).name,
                     grid.temperature_at(gx, gy)
                 ),
+                tx,
+                cy + ch + 18.0,
+                15.0,
+                c_muted(),
             );
         }
     }
 
+    // --- bottom control bar ---
+    let bar_h = 26.0;
+    draw_rectangle(0.0, sim_h - bar_h, sim_w, bar_h, cola(14, 15, 20, 220));
+    draw_line(
+        0.0,
+        sim_h - bar_h,
+        sim_w,
+        sim_h - bar_h,
+        1.0,
+        cola(70, 74, 90, 160),
+    );
     draw_text(
-        "L paint  R erase  Space pause  -> step  wheel=brush  Ctrl+wheel=zoom  0 reset  mid-drag pan  F2 heat  F5/F9 save/load  F8 showcase",
-        8.0,
-        sim_h - 24.0,
-        16.0,
-        Color::from_rgba(200, 200, 210, 220),
+        "L paint   R erase   wheel brush   +/- zoom   0 reset   mid-drag/minimap pan   Space pause   F2 heat   F5/F9 save/load   F8 showcase",
+        10.0,
+        sim_h - 8.0,
+        15.0,
+        c_muted(),
     );
     if !status.is_empty() {
-        draw_text(
-            status,
-            8.0,
-            sim_h - 8.0,
-            16.0,
-            Color::from_rgba(140, 220, 140, 230),
-        );
+        draw_text(status, sim_w - 230.0, sim_h - 8.0, 15.0, col(150, 210, 150));
     }
 }
 

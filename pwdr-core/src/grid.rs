@@ -1186,6 +1186,7 @@ mod tests {
         LAVA, OIL, PLANT, SALT, SALTWATER, SAND, SMOKE, SPARK, STEAM, STONE, THERMITE, VOID, WATER,
         WOOD,
     };
+    use crate::material::{ASH, OXYGEN, SNOW};
     use crate::material::{
         BATTERY, COAL, COOLER, FUSE, HEATER, HYDROGEN, LAMP, LITLAMP, MELTWAX, MERCURY, NITRO,
         OBSIDIAN, WAX,
@@ -2381,6 +2382,73 @@ mod tests {
             "cooler chilled neighbour: {}",
             cg.temperature_at(1, 0)
         );
+    }
+
+    #[test]
+    fn snow_melts_when_warm() {
+        let (mut g, x, y) = boxed(SNOW, 30.0);
+        g.step();
+        assert_eq!(g.material_at(x, y), WATER, "warm snow melts to water");
+    }
+
+    #[test]
+    fn oxygen_feeds_fire() {
+        let mut g = Grid::new(14, 14, 1);
+        for y in 0..14 {
+            for x in 0..14 {
+                if x == 0 || y == 0 || x == 13 || y == 13 {
+                    g.set(x, y, STONE);
+                }
+            }
+        }
+        for y in 1..13 {
+            for x in 1..13 {
+                g.set(x, y, OXYGEN);
+            }
+        }
+        let o0 = g.count(OXYGEN);
+        g.set(7, 7, FIRE);
+        for _ in 0..20 {
+            g.step();
+        }
+        assert!(g.count(OXYGEN) < o0 / 4, "fire tore through the oxygen");
+    }
+
+    #[test]
+    fn ash_is_inert_and_settles() {
+        let mut g = Grid::new(6, 10, 1);
+        for x in 0..6 {
+            g.set(x, 9, STONE); // floor
+        }
+        g.set(3, 0, ASH);
+        g.set(2, 5, WATER); // a neighbour that must not react with ash
+        let ash0 = g.count(ASH);
+        for _ in 0..60 {
+            g.step();
+        }
+        assert_eq!(g.count(ASH), ash0, "ash is inert (no reactions)");
+        assert_eq!(
+            g.material_at(3, 8),
+            ASH,
+            "ash fell and settled on the floor"
+        );
+    }
+
+    #[test]
+    fn burnt_fuse_leaves_ash() {
+        let mut g = Grid::new(16, 3, 1);
+        for x in 0..16 {
+            g.set(x, 1, FUSE);
+        }
+        g.set(0, 1, FIRE);
+        let mut saw_ash = false;
+        for _ in 0..300 {
+            g.step();
+            if g.count(ASH) > 0 {
+                saw_ash = true;
+            }
+        }
+        assert!(saw_ash, "a burning fuse leaves an ash trail");
     }
 
     #[test]
