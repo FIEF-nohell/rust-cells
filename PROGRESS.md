@@ -292,3 +292,21 @@ behavioral, determinism-golden, and property invariants)** pass. `pwdr-core` com
 zero graphics dependencies (rayon only). `cargo bench` baselines recorded in the README.
 The macroquad app builds and runs the full self-designed 20-element roster with a
 categorized + searchable palette, pause/step, readouts, and deterministic save/load.
+
+---
+
+## Post-M9 fixes (user feedback)
+
+- **Conduction reworked.** Spark is now a pure igniter that **vanishes** (decay→Empty) — a
+  free-painted spark no longer materializes copper. The charge travels as energized copper:
+  `Spark+Copper→Charged`, `Charged+Copper→Charged`, with a refractory `Charged→Cooled→Copper`
+  trail (new **Cooled** material, id 20) that stops the wave bouncing. Charged/Cooled are
+  internal (`material::user_paintable` hides them from the palette).
+- **Paint writes into empty cells only** (left-click never overwrites matter); right-click
+  erase still clears anything.
+- **Brush size = Shift + mouse wheel** (replaces `[`/`]`). Material hotkeys removed —
+  selection is via the click/search palette only (no collision with search typing).
+- **Window is resizable**; a resize shows a "this wipes the canvas" prompt — Enter rebuilds
+  the grid to fit (correct mouse mapping at the new size), Esc keeps the current canvas.
+- Tests: +paint-empty-only, +free-spark-leaves-no-copper; spark conduction test updated.
+  45 unit + 2 proptest green; golden regenerated (paint RNG consumption changed).

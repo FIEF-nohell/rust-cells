@@ -7,12 +7,11 @@ use pwdr_core::material::{self, MaterialId, Phase, EMPTY};
 use pwdr_core::Grid;
 use std::time::Instant;
 
-const GRID_W: usize = 256;
-const GRID_H: usize = 256;
-const SCALE: f32 = 3.0;
+const SCALE: f32 = 3.0; // screen pixels per cell
 const PANEL_W: f32 = 240.0;
 const SEED: u64 = 0xC0FFEE;
 const SAVE_PATH: &str = "pwdr.save";
+const MAX_BRUSH: usize = 64;
 
 /// Fixed simulation timestep (60 Hz), decoupled from render framerate.
 const TICK_DT: f64 = 1.0 / 60.0;
@@ -20,8 +19,9 @@ const TICK_DT: f64 = 1.0 / 60.0;
 fn window_conf() -> Conf {
     Conf {
         window_title: "pwdr".to_owned(),
-        window_width: (GRID_W as f32 * SCALE + PANEL_W) as i32,
-        window_height: (GRID_H as f32 * SCALE) as i32,
+        window_width: (256.0 * SCALE + PANEL_W) as i32,
+        window_height: (256.0 * SCALE) as i32,
+        window_resizable: true,
         ..Default::default()
     }
 }
@@ -39,16 +39,27 @@ fn swatch(id: MaterialId) -> Color {
     Color::from_rgba(c[0], c[1], c[2], 255)
 }
 
-#[macroquad::main(window_conf)]
-async fn main() {
-    let mut grid = Grid::new(GRID_W, GRID_H, SEED);
+/// Cell grid dimensions that fit the current window (leaving room for the panel).
+fn grid_dims(win_w: f32, win_h: f32) -> (usize, usize) {
+    let avail = (win_w - PANEL_W).max(SCALE * 16.0);
+    let gw = (avail / SCALE).floor() as usize;
+    let gh = (win_h / SCALE).floor() as usize;
+    (gw.max(16), gh.max(16))
+}
 
-    let mut image = Image::gen_image_color(GRID_W as u16, GRID_H as u16, BLACK);
+fn make_texture(gw: usize, gh: usize) -> (Image, Texture2D) {
+    let image = Image::gen_image_color(gw as u16, gh as u16, BLACK);
     let texture = Texture2D::from_image(&image);
     texture.set_filter(FilterMode::Nearest);
+    (image, texture)
+}
 
-    let sim_w = GRID_W as f32 * SCALE;
-    let sim_h = GRID_H as f32 * SCALE;
+#[macroquad::main(window_conf)]
+async fn main() {
+    let (mut win_w, mut win_h) = (screen_width(), screen_height());
+    let (mut gw, mut gh) = grid_dims(win_w, win_h);
+    let mut grid = Grid::new(gw, gh, SEED);
+    let (mut image, mut texture) = make_texture(gw, gh);
 
     let mut acc = 0.0f64;
     let mut brush = 4usize;
@@ -57,9 +68,42 @@ async fn main() {
     let mut search = String::new();
     let mut last_tick_ms = 0.0f32;
     let mut status = String::new();
+    let mut pending_resize = false;
 
     loop {
-        // --- text input drives the palette search box ---
+        let sim_px_w = gw as f32 * SCALE;
+        let sim_px_h = gh as f32 * SCALE;
+        let panel_x = screen_width() - PANEL_W;
+
+        // --- window resize: prompt before wiping ---
+        if (screen_width() - win_w).abs() > 0.5 || (screen_height() - win_h).abs() > 0.5 {
+            pending_resize = true;
+        }
+        if pending_resize {
+            if is_key_pressed(KeyCode::Enter) {
+                win_w = screen_width();
+                win_h = screen_height();
+                let (ngw, ngh) = grid_dims(win_w, win_h);
+                gw = ngw;
+                gh = ngh;
+                grid = Grid::new(gw, gh, SEED);
+                let (ni, nt) = make_texture(gw, gh);
+                image = ni;
+                texture = nt;
+                pending_resize = false;
+                status = format!("resized to {gw}x{gh}");
+            } else if is_key_pressed(KeyCode::Escape) {
+                // Keep the canvas; stop tracking this size so we don't re-prompt.
+                win_w = screen_width();
+                win_h = screen_height();
+                pending_resize = false;
+            }
+            draw_resize_prompt(gw, gh);
+            next_frame().await;
+            continue;
+        }
+
+        // --- palette search typing (alphabetic only, so controls never collide) ---
         while let Some(c) = get_char_pressed() {
             let lc = c.to_ascii_lowercase();
             if lc.is_ascii_alphabetic() {
@@ -73,7 +117,7 @@ async fn main() {
             search.clear();
         }
 
-        // --- controls (non-text keys, so they never collide with search) ---
+        // --- controls ---
         if is_key_pressed(KeyCode::Space) {
             paused = !paused;
         }
@@ -81,14 +125,17 @@ async fn main() {
         if is_key_pressed(KeyCode::Right) {
             do_single_step = true;
         }
-        if is_key_pressed(KeyCode::LeftBracket) && brush > 0 {
-            brush -= 1;
-        }
-        if is_key_pressed(KeyCode::RightBracket) {
-            brush += 1;
+        // Brush size: Shift + mouse wheel.
+        let (_, wheel) = mouse_wheel();
+        if wheel != 0.0 && (is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift)) {
+            if wheel > 0.0 {
+                brush = (brush + 1).min(MAX_BRUSH);
+            } else {
+                brush = brush.saturating_sub(1);
+            }
         }
         if is_key_pressed(KeyCode::Delete) {
-            grid = Grid::new(GRID_W, GRID_H, SEED);
+            grid = Grid::new(gw, gh, SEED);
             status = "cleared".into();
         }
         if is_key_pressed(KeyCode::F5) {
@@ -99,20 +146,25 @@ async fn main() {
         }
         if is_key_pressed(KeyCode::F9) {
             match std::fs::read(SAVE_PATH).ok().and_then(|b| Grid::deserialize(&b)) {
-                Some(g) if g.width() == GRID_W && g.height() == GRID_H => {
+                Some(g) => {
+                    gw = g.width();
+                    gh = g.height();
                     grid = g;
-                    status = format!("loaded {SAVE_PATH}");
+                    let (ni, nt) = make_texture(gw, gh);
+                    image = ni;
+                    texture = nt;
+                    status = format!("loaded {SAVE_PATH} ({gw}x{gh})");
                 }
-                _ => status = "load failed".into(),
+                None => status = "load failed".into(),
             }
         }
 
-        // --- build the (filtered) palette layout, used for both draw + click ---
-        let palette = build_palette(&search, sim_w);
+        // --- palette layout (shared by draw + click) ---
+        let palette = build_palette(&search, panel_x);
 
         // --- mouse: palette click vs. brush paint ---
         let (mx, my) = mouse_position();
-        let in_panel = mx >= sim_w;
+        let in_panel = mx >= panel_x;
         if is_mouse_button_pressed(MouseButton::Left) && in_panel {
             for entry in &palette {
                 if let PaletteItem::Mat(id, rect) = entry {
@@ -122,18 +174,21 @@ async fn main() {
                 }
             }
         }
-        if !in_panel
-            && (is_mouse_button_down(MouseButton::Left) || is_mouse_button_down(MouseButton::Right))
-        {
-            let gx = (mx / SCALE) as i32;
-            let gy = (my / SCALE) as i32;
-            if gx >= 0 && gy >= 0 && (gx as usize) < GRID_W && (gy as usize) < GRID_H {
+        let painting = !in_panel
+            && mx < sim_px_w
+            && my < sim_px_h
+            && (is_mouse_button_down(MouseButton::Left) || is_mouse_button_down(MouseButton::Right));
+        if painting {
+            let gx = (mx / SCALE) as usize;
+            let gy = (my / SCALE) as usize;
+            if gx < gw && gy < gh {
+                // Left paints (only into empty cells); right erases anything.
                 let mat = if is_mouse_button_down(MouseButton::Right) {
                     EMPTY
                 } else {
                     selected
                 };
-                grid.paint(gx as usize, gy as usize, brush, mat);
+                grid.paint(gx, gy, brush, mat);
             }
         }
 
@@ -147,16 +202,14 @@ async fn main() {
             }
         } else {
             acc += get_frame_time() as f64;
-            let mut stepped = false;
             let t = Instant::now();
             let mut n = 0;
             while acc >= TICK_DT && n < 8 {
                 grid.step();
                 acc -= TICK_DT;
-                stepped = true;
                 n += 1;
             }
-            if stepped {
+            if n > 0 {
                 last_tick_ms = t.elapsed().as_secs_f32() * 1000.0 / n as f32;
             }
         }
@@ -173,39 +226,36 @@ async fn main() {
             0.0,
             WHITE,
             DrawTextureParams {
-                dest_size: Some(vec2(sim_w, sim_h)),
+                dest_size: Some(vec2(sim_px_w, sim_px_h)),
                 ..Default::default()
             },
         );
 
-        // brush cursor outline
-        if !in_panel {
+        if !in_panel && mx < sim_px_w && my < sim_px_h {
             let r = brush as f32 * SCALE + SCALE * 0.5;
             draw_circle_lines(mx, my, r, 1.0, Color::from_rgba(255, 255, 255, 120));
         }
 
-        draw_palette(&palette, selected, &search, sim_w);
-        draw_hud(&grid, selected, brush, paused, last_tick_ms, &status, mx, my, sim_w, sim_h);
+        draw_palette(&palette, selected, &search, panel_x);
+        draw_hud(&grid, gw, gh, selected, brush, paused, last_tick_ms, &status, mx, my, sim_px_w, sim_px_h);
 
         next_frame().await;
     }
 }
 
-/// A laid-out palette item: either a category header or a clickable material.
 enum PaletteItem {
     Header(String, f32),
     Mat(MaterialId, Rect),
 }
 
-/// Compute palette layout (positions) filtered by `search`. Shared by draw+click
-/// so they can never disagree.
 fn build_palette(search: &str, x0: f32) -> Vec<PaletteItem> {
     let mut items = Vec::new();
     let pad = 8.0;
     let row_h = 22.0;
-    let mut y = 56.0; // below the search box
+    let mut y = 56.0;
     for (phase, label) in PHASE_ORDER {
         let mats: Vec<MaterialId> = (1..material::MATERIALS.len() as MaterialId)
+            .filter(|&id| material::user_paintable(id))
             .filter(|&id| material::props(id).phase == phase)
             .filter(|&id| {
                 search.is_empty()
@@ -231,8 +281,7 @@ fn draw_palette(palette: &[PaletteItem], selected: MaterialId, search: &str, x0:
     draw_rectangle(x0, 0.0, PANEL_W, screen_height(), Color::from_rgba(28, 28, 34, 255));
     draw_line(x0, 0.0, x0, screen_height(), 1.0, Color::from_rgba(60, 60, 70, 255));
 
-    // search box
-    draw_text("search:", x0 + 8.0, 22.0, 18.0, GRAY);
+    draw_text("search (type to filter):", x0 + 8.0, 22.0, 18.0, GRAY);
     draw_rectangle(x0 + 8.0, 28.0, PANEL_W - 16.0, 22.0, Color::from_rgba(12, 12, 16, 255));
     let shown = if search.is_empty() { "_" } else { search };
     draw_text(shown, x0 + 12.0, 44.0, 18.0, WHITE);
@@ -257,6 +306,8 @@ fn draw_palette(palette: &[PaletteItem], selected: MaterialId, search: &str, x0:
 #[allow(clippy::too_many_arguments)]
 fn draw_hud(
     grid: &Grid,
+    gw: usize,
+    gh: usize,
     selected: MaterialId,
     brush: usize,
     paused: bool,
@@ -269,13 +320,11 @@ fn draw_hud(
 ) {
     let line = |i: f32, s: &str| draw_text(s, 8.0, 18.0 + i * 18.0, 18.0, WHITE);
 
-    // shaded strip for legibility
-    draw_rectangle(0.0, 0.0, 320.0, 96.0, Color::from_rgba(0, 0, 0, 110));
-    line(0.0, &format!("pwdr  {}x{}  {:.0} fps", GRID_W, GRID_H, get_fps()));
+    draw_rectangle(0.0, 0.0, 340.0, 96.0, Color::from_rgba(0, 0, 0, 110));
+    line(0.0, &format!("pwdr  {}x{}  {:.0} fps", gw, gh, get_fps()));
     line(1.0, &format!("tick {:.3} ms  {}", tick_ms, if paused { "PAUSED" } else { "running" }));
-    line(2.0, &format!("brush [{}]  sel: {}", brush, material::props(selected).name));
+    line(2.0, &format!("brush {}  sel: {}", brush, material::props(selected).name));
 
-    // cell readout under cursor
     if mx >= 0.0 && mx < sim_w && my >= 0.0 && my < sim_h {
         let gx = (mx / SCALE) as usize;
         let gy = (my / SCALE) as usize;
@@ -283,20 +332,13 @@ fn draw_hud(
             let m = grid.material_at(gx, gy);
             line(
                 3.0,
-                &format!(
-                    "({},{}) {}  {:.0}C",
-                    gx,
-                    gy,
-                    material::props(m).name,
-                    grid.temperature_at(gx, gy)
-                ),
+                &format!("({},{}) {}  {:.0}C", gx, gy, material::props(m).name, grid.temperature_at(gx, gy)),
             );
         }
     }
 
-    // controls hint + status at the bottom of the sim area
     draw_text(
-        "L paint  R erase  Space pause  -> step  [ ] brush  F5 save  F9 load  Del clear",
+        "L paint (empty only)  R erase  Space pause  -> step  Shift+wheel brush  F5 save  F9 load  Del clear",
         8.0,
         sim_h - 24.0,
         16.0,
@@ -305,6 +347,30 @@ fn draw_hud(
     if !status.is_empty() {
         draw_text(status, 8.0, sim_h - 8.0, 16.0, Color::from_rgba(140, 220, 140, 230));
     }
+}
+
+fn draw_resize_prompt(gw: usize, gh: usize) {
+    draw_rectangle(0.0, 0.0, screen_width(), screen_height(), Color::from_rgba(0, 0, 0, 180));
+    let (cw, ch) = (520.0, 130.0);
+    let (cx, cy) = ((screen_width() - cw) * 0.5, (screen_height() - ch) * 0.5);
+    draw_rectangle(cx, cy, cw, ch, Color::from_rgba(32, 32, 40, 255));
+    draw_rectangle_lines(cx, cy, cw, ch, 2.0, Color::from_rgba(120, 120, 140, 255));
+    draw_text("Window resized", cx + 20.0, cy + 34.0, 26.0, WHITE);
+    draw_text(
+        "Resizing the canvas will WIPE everything you've drawn.",
+        cx + 20.0,
+        cy + 66.0,
+        18.0,
+        Color::from_rgba(230, 200, 200, 255),
+    );
+    let (ngw, ngh) = grid_dims(screen_width(), screen_height());
+    draw_text(
+        &format!("[Enter] resize & clear -> {ngw}x{ngh}     [Esc] keep current {gw}x{gh}"),
+        cx + 20.0,
+        cy + 98.0,
+        18.0,
+        Color::from_rgba(180, 220, 180, 255),
+    );
 }
 
 /// Reinterpret a flat RGBA `[u8]` as `[[u8;4]]` for macroquad's `Image`.

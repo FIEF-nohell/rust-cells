@@ -175,8 +175,11 @@ impl Grid {
         self.touch(x, y);
     }
 
-    /// Paint a filled disc of `mat`. `radius` 0 = 1 cell. Erase by painting `EMPTY`.
+    /// Paint a filled disc of `mat`. `radius` 0 = 1 cell. Painting a real
+    /// material only **writes into empty cells** (never overwrites existing
+    /// matter); painting `EMPTY` erases anything in the disc.
     pub fn paint(&mut self, cx: usize, cy: usize, radius: usize, mat: MaterialId) {
+        let erasing = mat == EMPTY;
         let r = radius as isize;
         let (cx, cy) = (cx as isize, cy as isize);
         for dy in -r..=r {
@@ -185,8 +188,12 @@ impl Grid {
                     continue;
                 }
                 let (x, y) = (cx + dx, cy + dy);
-                if self.in_bounds(x, y) {
-                    self.set(x as usize, y as usize, mat);
+                if !self.in_bounds(x, y) {
+                    continue;
+                }
+                let (x, y) = (x as usize, y as usize);
+                if erasing || self.is_empty(x, y) {
+                    self.set(x, y, mat);
                 }
             }
         }
@@ -931,8 +938,8 @@ pub fn can_move_into(mover: MaterialId, target: MaterialId, dy: isize) -> bool {
 mod tests {
     use super::*;
     use crate::material::{
-        ACID, BASALT, CHARGED, COPPER, CRYO, FIRE, FUME, GLASS, GUNPOWDER, ICE, LAVA, OIL, SAND,
-        SMOKE, SPARK, STEAM, STONE, WATER, WOOD,
+        ACID, BASALT, CHARGED, COOLED, COPPER, CRYO, FIRE, FUME, GLASS, GUNPOWDER, ICE, LAVA, OIL,
+        SAND, SMOKE, SPARK, STEAM, STONE, WATER, WOOD,
     };
 
     #[test]
@@ -1415,23 +1422,24 @@ mod tests {
         for x in 0..22 {
             g.set(x, 1, COPPER);
         }
-        g.set(0, 1, SPARK);
+        g.set(0, 0, SPARK); // beside the wire end (spark vanishes, doesn't consume wire)
         let mut reached = false;
         for _ in 0..80 {
             g.step();
             let m = g.material_at(20, 1);
-            if m == SPARK || m == CHARGED {
+            if m == CHARGED || m == COOLED {
                 reached = true;
                 break;
             }
         }
-        assert!(reached, "spark conducted to the far end of the wire");
+        assert!(reached, "charge conducted to the far end of the wire");
 
         for _ in 0..200 {
             g.step();
         }
         assert_eq!(g.count(SPARK), 0, "no perpetual spark");
-        assert_eq!(g.count(CHARGED), 0, "charge decayed back to copper");
+        assert_eq!(g.count(CHARGED), 0, "charge decayed");
+        assert_eq!(g.count(COOLED), 0, "refractory trail decayed");
         assert_eq!(g.count(COPPER), 22, "wire restored");
         assert_eq!(g.awake_chunk_count(), 0, "and the grid sleeps");
     }
@@ -1628,6 +1636,32 @@ mod tests {
     }
 
     #[test]
+    fn paint_writes_only_into_empty_cells() {
+        let mut g = Grid::new(8, 8, 1);
+        g.paint(4, 4, 1, SAND);
+        let sand = g.count(SAND);
+        g.paint(4, 4, 1, WATER); // must not overwrite sand
+        assert_eq!(g.count(SAND), sand, "sand untouched");
+        assert_eq!(g.count(WATER), 0, "water did not overwrite matter");
+        g.paint(4, 4, 1, EMPTY); // erase clears anything
+        assert_eq!(g.count(SAND), 0, "erase removed the sand");
+    }
+
+    #[test]
+    fn free_spark_vanishes_without_spawning_copper() {
+        // A spark in open air must just fade — never materialize copper.
+        let mut g = Grid::new(8, 8, 1);
+        g.set(4, 4, SPARK);
+        for _ in 0..30 {
+            g.step();
+        }
+        assert_eq!(g.count(COPPER), 0, "no copper spawned from a free spark");
+        assert_eq!(g.count(CHARGED), 0);
+        assert_eq!(g.count(COOLED), 0);
+        assert_eq!(g.count(SPARK), 0, "spark faded");
+    }
+
+    #[test]
     fn golden_hash_is_stable() {
         // Fixed scenario, fixed seed, N ticks -> known hash. Regenerate by
         // running once and pasting the printed value (see PROGRESS.md).
@@ -1642,5 +1676,5 @@ mod tests {
     }
 
     // Regenerate: temporarily `assert_eq!(g.hash(), 0)` and read the panic msg.
-    const GOLDEN_M2: u64 = 11145926252808830224;
+    const GOLDEN_M2: u64 = 3370987513426964979;
 }

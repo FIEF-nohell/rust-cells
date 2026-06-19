@@ -69,6 +69,7 @@ pub const GUNPOWDER: MaterialId = 16;
 pub const CRYO: MaterialId = 17;
 pub const WOOD: MaterialId = 18;
 pub const GLASS: MaterialId = 19;
+pub const COOLED: MaterialId = 20;
 
 const NEVER_HOT: f32 = f32::INFINITY;
 const NEVER_COLD: f32 = f32::NEG_INFINITY;
@@ -258,10 +259,10 @@ pub static MATERIALS: &[MaterialProps] = &[
         color: [255, 245, 180],
         color_jitter: 0,
         dispersion: 0,
-        // Lives 2 ticks then leaves a refractory Charged trail; this makes a
-        // clean traveling wave that doesn't bounce back along the conductor.
+        // A free igniter: lives 2 ticks then vanishes (it does NOT leave copper).
+        // It energizes adjacent copper into Charged and ignites fuel.
         life: 2,
-        decay_to: CHARGED,
+        decay_to: EMPTY,
         default_temp: 60.0,
         conductivity: 0.10,
         high_temp: NEVER_HOT,
@@ -272,12 +273,15 @@ pub static MATERIALS: &[MaterialProps] = &[
     MaterialProps {
         name: "Charged",
         phase: Phase::Solid,
+        // Energized copper: propagates the charge to neighbouring plain copper,
+        // then cools to a refractory Cooled state (not Copper) so the wave can't
+        // bounce back along its own trail.
         density: 9000,
-        color: [240, 200, 120],
+        color: [255, 230, 150],
         color_jitter: 8,
         dispersion: 0,
-        life: 4, // refractory period, then back to plain copper
-        decay_to: COPPER,
+        life: 2,
+        decay_to: COOLED,
         default_temp: 20.0,
         conductivity: 0.22,
         high_temp: NEVER_HOT,
@@ -397,7 +401,29 @@ pub static MATERIALS: &[MaterialProps] = &[
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
+    MaterialProps {
+        name: "Cooled",
+        phase: Phase::Solid, // refractory copper trail; reverts to copper
+        density: 9000,
+        color: [150, 95, 60],
+        color_jitter: 8,
+        dispersion: 0,
+        life: 3,
+        decay_to: COPPER,
+        default_temp: 20.0,
+        conductivity: 0.22,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
 ];
+
+/// Internal materials the user shouldn't paint (transient conduction states).
+#[inline]
+pub fn user_paintable(id: MaterialId) -> bool {
+    !matches!(id, EMPTY | CHARGED | COOLED)
+}
 
 /// Blast radius for explosive materials; 0 = not explosive. A function rather
 /// than a table column so adding one explosive doesn't touch every row.
@@ -430,10 +456,14 @@ pub static REACTIONS: &[Reaction] = &[
     Reaction { a: FIRE, b: OIL, a_to: FIRE, b_to: FIRE, prob: 0.5, min_temp: NEVER_COLD },
     // Fire is quenched by water (and flashes the water to steam).
     Reaction { a: FIRE, b: WATER, a_to: SMOKE, b_to: STEAM, prob: 0.4, min_temp: NEVER_COLD },
-    // Spark conduction: a spark energizes adjacent plain copper (wave travel).
-    Reaction { a: SPARK, b: COPPER, a_to: SPARK, b_to: SPARK, prob: 1.0, min_temp: NEVER_COLD },
-    // A spark ignites oil; the spark itself becomes refractory.
-    Reaction { a: SPARK, b: OIL, a_to: CHARGED, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
+    // Conduction: a spark energizes adjacent copper; charged copper propagates
+    // the charge along the wire (the Charged->Cooled->Copper trail prevents the
+    // wave from bouncing backward).
+    Reaction { a: SPARK, b: COPPER, a_to: SPARK, b_to: CHARGED, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction { a: CHARGED, b: COPPER, a_to: CHARGED, b_to: CHARGED, prob: 1.0, min_temp: NEVER_COLD },
+    // Sparks and live wires ignite adjacent fuel.
+    Reaction { a: SPARK, b: OIL, a_to: SPARK, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction { a: CHARGED, b: OIL, a_to: CHARGED, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
     // Corrosion: acid dissolves materials and is consumed in the process.
     Reaction { a: ACID, b: SAND, a_to: EMPTY, b_to: EMPTY, prob: 0.20, min_temp: NEVER_COLD },
     Reaction { a: ACID, b: STONE, a_to: EMPTY, b_to: EMPTY, prob: 0.10, min_temp: NEVER_COLD },
@@ -442,7 +472,8 @@ pub static REACTIONS: &[Reaction] = &[
     Reaction { a: ACID, b: WOOD, a_to: EMPTY, b_to: EMPTY, prob: 0.15, min_temp: NEVER_COLD },
     // Flammable gas: fire and sparks propagate through fume.
     Reaction { a: FIRE, b: FUME, a_to: FIRE, b_to: FIRE, prob: 0.7, min_temp: NEVER_COLD },
-    Reaction { a: SPARK, b: FUME, a_to: CHARGED, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction { a: SPARK, b: FUME, a_to: SPARK, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
+    Reaction { a: CHARGED, b: FUME, a_to: CHARGED, b_to: FIRE, prob: 1.0, min_temp: NEVER_COLD },
     // Flammable solid: fire creeps along wood.
     Reaction { a: FIRE, b: WOOD, a_to: FIRE, b_to: FIRE, prob: 0.05, min_temp: NEVER_COLD },
     // Cold source: cryo freezes adjacent water regardless of its own temperature.
