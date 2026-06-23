@@ -153,8 +153,8 @@ pub static MATERIALS: &[MaterialProps] = &[
         decay_to: EMPTY,
         default_temp: 20.0,
         conductivity: 0.10,
-        high_temp: NEVER_HOT,
-        high_to: EMPTY,
+        high_temp: 1100.0, // melts to lava (e.g. thermite/lava burning through it)
+        high_to: LAVA,
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
@@ -1223,6 +1223,17 @@ pub static REACTIONS: &[Reaction] = &[
         a_to: CHARGED,
         b_to: FIRE,
         prob: 0.5,
+        min_temp: NEVER_COLD,
+    },
+    // Molten rock slowly melts through solid stone it touches — so lava (and
+    // thermite, which flashes to lava) can burn a hole through a stone slab.
+    // Low probability so it eats through gradually rather than all at once.
+    Reaction {
+        a: LAVA,
+        b: STONE,
+        a_to: LAVA,
+        b_to: LAVA,
+        prob: 0.04,
         min_temp: NEVER_COLD,
     },
     // Lava ignites everything flammable it touches (it's 1200 degrees).

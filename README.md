@@ -88,6 +88,8 @@ Some interactions that fall out of the data-driven rules:
 - Clone is an infinite source of whatever it touches. Void is an infinite sink. Drain is a
   liquid-only sink — it empties a tank without eating the walls.
 - Thermite flashes to molten slag. Gunpowder, Nitro, TNT, and Hydrogen chain-detonate.
+- Lava (and thermite, which flashes to lava) slowly melts through stone, turning it to more
+  lava. Diamond is the only fireproof, acid-proof, blast-proof solid.
 - The critters move themselves: Fish swim through water (and flop helplessly when drained out),
   Worms burrow down through powders, and Ants walk on surfaces and graze on Plant.
 

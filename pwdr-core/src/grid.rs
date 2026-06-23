@@ -1708,6 +1708,39 @@ mod tests {
     }
 
     #[test]
+    fn stone_melts_to_lava_when_very_hot() {
+        // Stone is no longer heat-proof: thermite/lava heat melts it into lava.
+        let (mut g, x, y) = boxed(STONE, 1200.0);
+        g.step();
+        assert_eq!(g.material_at(x, y), LAVA, "molten stone -> lava");
+    }
+
+    #[test]
+    fn thermite_burns_through_stone() {
+        // A thermite charge sitting on a stone slab should eat a hole through it.
+        let mut g = Grid::new(7, 9, 1);
+        for y in 4..9 {
+            for x in 0..7 {
+                g.set(x, y, STONE); // a stone slab
+            }
+        }
+        for x in 2..5 {
+            g.set(x, 3, THERMITE); // thermite pile on top
+        }
+        g.set(3, 2, FIRE); // ignite it
+        let before = g.count(STONE);
+        for _ in 0..200 {
+            g.step();
+        }
+        assert!(
+            g.count(STONE) < before,
+            "thermite melted through stone: {} -> {}",
+            before,
+            g.count(STONE)
+        );
+    }
+
+    #[test]
     fn copper_conducts_heat_and_holds_it() {
         // A lone hot copper cell in air must hold heat (not crash to ambient).
         let mut s = Grid::new(9, 9, 1);
@@ -1765,13 +1798,15 @@ mod tests {
     #[test]
     fn lava_and_water_react_thermally() {
         // Emergent: hot lava + cold water -> basalt crust + steam, no special rule.
+        // Diamond crucible: inert, so the vessel itself doesn't melt and muddy the
+        // experiment (lava melts through plain stone now).
         let mut g = Grid::new(9, 12, 5);
         for y in 0..12 {
-            g.set(0, y, STONE);
-            g.set(8, y, STONE);
+            g.set(0, y, DIAMOND);
+            g.set(8, y, DIAMOND);
         }
         for x in 0..9 {
-            g.set(x, 11, STONE); // floor
+            g.set(x, 11, DIAMOND); // floor
         }
         for y in 7..11 {
             for x in 1..8 {
