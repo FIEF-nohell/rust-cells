@@ -323,6 +323,10 @@ impl Grid {
                             self.update_void(x, y, &NEIGHBOURS);
                             continue;
                         }
+                        if a == material::DRAIN {
+                            self.update_drain(x, y, &NEIGHBOURS);
+                            continue;
+                        }
                         if a == material::BATTERY {
                             self.update_battery(x, y, &NEIGHBOURS);
                             continue;
@@ -453,6 +457,23 @@ impl Grid {
             let (nx, ny) = (nx as usize, ny as usize);
             let m = self.material_at(nx, ny);
             if m != EMPTY && m != material::VOID {
+                self.transform(nx, ny, EMPTY);
+                self.touch(nx, ny);
+            }
+        }
+    }
+
+    /// Drain: a liquid-only sink. Deletes adjacent liquid cells (water, oil,
+    /// acid, lava, …) but leaves solids, powders, gases and critters alone — so
+    /// it empties a tank without chewing through its walls.
+    fn update_drain(&mut self, x: usize, y: usize, neigh: &[(isize, isize); 4]) {
+        for (dx, dy) in neigh {
+            let (nx, ny) = (x as isize + dx, y as isize + dy);
+            if !self.in_bounds(nx, ny) {
+                continue;
+            }
+            let (nx, ny) = (nx as usize, ny as usize);
+            if material::phase(self.material_at(nx, ny)) == Phase::Liquid {
                 self.transform(nx, ny, EMPTY);
                 self.touch(nx, ny);
             }
@@ -809,6 +830,7 @@ impl Grid {
             Phase::Powder => self.update_powder(x, y),
             Phase::Liquid => self.update_liquid(x, y),
             Phase::Gas => self.update_gas(x, y),
+            Phase::Life => self.update_critter(x, y),
             // Energy propagation lands in later milestones.
             _ => {}
         }
@@ -893,6 +915,85 @@ impl Grid {
             return;
         }
         let _ = self.try_move(x, y, x as isize + b, y as isize, mat);
+    }
+
+    /// Critters (Phase::Life) move under their own rules rather than by gravity.
+    /// Each keeps its chunk awake (it is always potentially moving) and acts at
+    /// most once per tick — a swap/`transform` tags `gen`, so the bottom-up
+    /// movement scan never processes it twice.
+    fn update_critter(&mut self, x: usize, y: usize) {
+        self.touch(x, y); // an agent is never "settled"; keep the region alive
+        match self.material_at(x, y) {
+            material::FISH => self.update_fish(x, y),
+            material::WORM => self.update_worm(x, y),
+            material::ANT => self.update_ant(x, y),
+            _ => {}
+        }
+    }
+
+    /// Four neighbours in a randomized rotation, so a critter has no directional
+    /// bias from the fixed scan order.
+    #[inline]
+    fn shuffled_neighbours(&mut self) -> [(isize, isize); 4] {
+        const N: [(isize, isize); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
+        let s = self.rng.below(4) as usize;
+        [N[s], N[(s + 1) % 4], N[(s + 2) % 4], N[(s + 3) % 4]]
+    }
+
+    /// Fish: drifts by swapping with an adjacent water cell (any direction). Out
+    /// of water it just sinks through air — so draining a tank strands the fish.
+    fn update_fish(&mut self, x: usize, y: usize) {
+        for (dx, dy) in self.shuffled_neighbours() {
+            let (nx, ny) = (x as isize + dx, y as isize + dy);
+            if self.in_bounds(nx, ny)
+                && self.material_at(nx as usize, ny as usize) == material::WATER
+            {
+                self.swap_cells(x, y, nx as usize, ny as usize);
+                return;
+            }
+        }
+        if y + 1 < self.height && self.material_at(x, y + 1) == EMPTY {
+            self.swap_cells(x, y, x, y + 1);
+        }
+    }
+
+    /// Worm: burrows straight down through powders (sand, soil, …) and air; when
+    /// it can't sink it wriggles one step sideways through powder/air.
+    fn update_worm(&mut self, x: usize, y: usize) {
+        let passable = |m: MaterialId| m == EMPTY || material::phase(m) == Phase::Powder;
+        if y + 1 < self.height && passable(self.material_at(x, y + 1)) {
+            self.swap_cells(x, y, x, y + 1);
+            return;
+        }
+        let dir = if self.rng.bool() { 1 } else { -1 };
+        let nx = x as isize + dir;
+        if self.in_bounds(nx, y as isize) && passable(self.material_at(nx as usize, y)) {
+            self.swap_cells(x, y, nx as usize, y);
+        }
+    }
+
+    /// Ant: eats an adjacent plant (its turn), else falls through air, else walks
+    /// one step sideways across a surface.
+    fn update_ant(&mut self, x: usize, y: usize) {
+        for (dx, dy) in self.shuffled_neighbours() {
+            let (nx, ny) = (x as isize + dx, y as isize + dy);
+            if self.in_bounds(nx, ny)
+                && self.material_at(nx as usize, ny as usize) == material::PLANT
+            {
+                self.transform(nx as usize, ny as usize, EMPTY);
+                self.touch(nx as usize, ny as usize);
+                return;
+            }
+        }
+        if y + 1 < self.height && self.material_at(x, y + 1) == EMPTY {
+            self.swap_cells(x, y, x, y + 1);
+            return;
+        }
+        let dir = if self.rng.bool() { 1 } else { -1 };
+        let nx = x as isize + dir;
+        if self.in_bounds(nx, y as isize) && self.material_at(nx as usize, y) == EMPTY {
+            self.swap_cells(x, y, nx as usize, y);
+        }
     }
 
     /// Scan `dir` (±1) up to `max` steps through cells this liquid can pass
@@ -1187,10 +1288,10 @@ mod tests {
         LAVA, OIL, PLANT, SALT, SALTWATER, SAND, SMOKE, SPARK, STEAM, STONE, THERMITE, VOID, WATER,
         WOOD,
     };
+    use crate::material::{ANT, DRAIN, FISH, WORM};
     use crate::material::{ASH, DIAMOND, EMBER, OXYGEN, SNOW, SOIL};
     use crate::material::{
-        BATTERY, COAL, COOLER, FUSE, HEATER, HYDROGEN, LAMP, LITLAMP, MELTWAX, MERCURY, NITRO,
-        OBSIDIAN, WAX,
+        BATTERY, COAL, COOLER, FUSE, HEATER, HYDROGEN, LAMP, LITLAMP, MELTWAX, NITRO, OBSIDIAN, WAX,
     };
 
     #[test]
@@ -2050,6 +2151,113 @@ mod tests {
     }
 
     #[test]
+    fn drain_empties_a_pool() {
+        // Narrow shaft so every floor cell is adjacent to the drain (a wide flat
+        // pool would leave resting corner puddles that never flow to it).
+        let mut g = Grid::new(3, 9, 1);
+        g.set(1, 8, DRAIN); // drain on the floor
+        for y in 0..6 {
+            for x in 0..3 {
+                g.set(x, y, WATER); // a column of water above it
+            }
+        }
+        for _ in 0..400 {
+            g.step();
+        }
+        assert_eq!(g.count(WATER), 0, "drain emptied the pool");
+        assert_eq!(g.material_at(1, 8), DRAIN, "drain persists");
+    }
+
+    #[test]
+    fn drain_eats_liquid_but_not_solids() {
+        let mut g = Grid::new(3, 3, 1);
+        g.set(1, 1, DRAIN);
+        g.set(0, 1, STONE); // solid neighbour: must survive
+        g.set(2, 1, WATER); // liquid neighbour: must be eaten
+        g.set(1, 0, OIL); // another liquid neighbour
+        for _ in 0..10 {
+            g.step();
+        }
+        assert_eq!(g.count(WATER), 0, "drain ate the water");
+        assert_eq!(g.count(OIL), 0, "drain ate the oil");
+        assert_eq!(g.count(STONE), 1, "drain left the solid alone");
+    }
+
+    #[test]
+    fn fish_stays_in_water() {
+        let mut g = Grid::new(9, 9, 1);
+        for y in 0..9 {
+            for x in 0..9 {
+                g.set(x, y, WATER);
+            }
+        }
+        g.set(4, 4, FISH);
+        for _ in 0..100 {
+            g.step();
+        }
+        // The fish still exists and is somewhere in the tank (it never converts).
+        assert_eq!(g.count(FISH), 1, "fish persists while submerged");
+    }
+
+    #[test]
+    fn fish_sinks_when_water_drained() {
+        let mut g = Grid::new(5, 12, 1);
+        g.set(2, 0, FISH); // in open air
+        for _ in 0..60 {
+            g.step();
+        }
+        let fy = (0..12).find(|&y| g.material_at(2, y) == FISH);
+        assert_eq!(fy, Some(11), "stranded fish sank to the floor");
+    }
+
+    #[test]
+    fn worm_burrows_into_a_powder_pile() {
+        let mut g = Grid::new(5, 12, 1);
+        for y in 4..12 {
+            for x in 0..5 {
+                g.set(x, y, SAND); // a sand bed
+            }
+        }
+        g.set(2, 3, WORM); // resting on top of the bed
+        for _ in 0..80 {
+            g.step();
+        }
+        // The worm wriggles, so find it anywhere on the grid, not just column 2.
+        let mut pos = None;
+        for y in 0..12 {
+            for x in 0..5 {
+                if g.material_at(x, y) == WORM {
+                    pos = Some((x, y));
+                }
+            }
+        }
+        let (_, wy) = pos.expect("worm still present");
+        assert!(wy >= 9, "worm burrowed deep into the sand (at row {wy})");
+        assert_eq!(g.count(WORM), 1, "worm conserved");
+    }
+
+    #[test]
+    fn ant_eats_plant() {
+        let mut g = Grid::new(7, 7, 1);
+        for x in 0..7 {
+            g.set(x, 4, PLANT); // a row of plant
+        }
+        for x in 0..7 {
+            g.set(x, 3, ANT); // ants sitting on it
+        }
+        let before = g.count(PLANT);
+        for _ in 0..60 {
+            g.step();
+        }
+        assert!(
+            g.count(PLANT) < before,
+            "ants grazed the plant: {} -> {}",
+            before,
+            g.count(PLANT)
+        );
+    }
+
+    #[test]
     fn salt_dissolves_in_water_and_melts_ice() {
         let mut g = Grid::new(5, 5, 1);
         for y in 0..5 {
@@ -2276,27 +2484,6 @@ mod tests {
             nitro > gp,
             "nitro blast ({nitro}) bigger than gunpowder ({gp})"
         );
-    }
-
-    #[test]
-    fn mercury_sinks_below_water() {
-        let mut g = Grid::new(5, 16, 1);
-        for y in 6..16 {
-            for x in 0..5 {
-                g.set(x, y, WATER);
-            }
-        }
-        g.set(2, 0, MERCURY); // dropped into the pool from above
-        for _ in 0..300 {
-            g.step();
-        }
-        let merc = (0..16).find(|&y| g.material_at(2, y) == MERCURY);
-        let top_water = (0..16).find(|&y| g.material_at(2, y) == WATER);
-        if let (Some(m), Some(w)) = (merc, top_water) {
-            assert!(m > w, "mercury ({m}) sank below water ({w})");
-        } else {
-            panic!("expected mercury and water present");
-        }
     }
 
     #[test]

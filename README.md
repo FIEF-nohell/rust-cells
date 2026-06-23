@@ -59,12 +59,19 @@ to life.
 
 ## The element roster
 
-| Phase | Elements |
-|-------|----------|
-| Powders | Sand, Gunpowder, Salt, Thermite, Snow, Ash, Soil, Ember |
-| Liquids | Water, Oil (floats), Saltwater (brine), Lava, Acid, Nitro, Mercury, Molten Wax |
-| Gases | Smoke, Steam, Fire, Fume, Hydrogen, Oxygen, Plasma, Frost |
-| Solids | Stone, Ice, Basalt, Obsidian, Glass, Diamond, Wood, Plant, Conductor, Cryo, Wax, Coal, TNT, Battery, Lamp, Fuse, Heater, Cooler, Clone, Void |
+The palette groups elements by category (which cuts across the physical phase — Lava is a
+liquid but lives under Fire & Heat, Gunpowder is a powder but under Explosives):
+
+| Category | Elements |
+|----------|----------|
+| Earth & Solids | Stone, Sand, Salt, Soil, Snow, Ash, Ice, Glass, Basalt, Obsidian, Diamond, Wood, Wax |
+| Liquids | Water, Oil (floats), Saltwater (brine), Acid, Molten Wax |
+| Gases | Smoke, Steam, Fume, Hydrogen, Oxygen |
+| Fire & Heat | Fire, Lava, Plasma, Frost, Ember, Coal, Cryo, Heater, Cooler |
+| Electronics | Conductor, Spark, Battery, Lamp, Fuse |
+| Explosives | Gunpowder, Thermite, Nitro, TNT |
+| Life | Plant, Fish, Worm, Ant |
+| Tools | Clone, Void, Drain |
 
 Some interactions that fall out of the data-driven rules:
 
@@ -74,8 +81,11 @@ Some interactions that fall out of the data-driven rules:
 - Salt melts Ice into non-freezing Brine. Acid dissolves most matter and is used up doing so.
 - Plasma and Frost are no-trace heat and cold "flames". Heater and Cooler are persistent
   temperature sources.
-- Clone is an infinite source of whatever it touches. Void is an infinite sink.
+- Clone is an infinite source of whatever it touches. Void is an infinite sink. Drain is a
+  liquid-only sink — it empties a tank without eating the walls.
 - Thermite flashes to molten slag. Gunpowder, Nitro, TNT, and Hydrogen chain-detonate.
+- The critters move themselves: Fish swim through water (and flop helplessly when drained out),
+  Worms burrow down through powders, and Ants walk on surfaces and graze on Plant.
 
 ## Architecture
 

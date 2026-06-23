@@ -13,6 +13,24 @@ pub enum Phase {
     Gas,
     Solid,
     Energy,
+    /// Self-propelled critters (fish/worm/ant). Move under their own rules in the
+    /// movement pass rather than by gravity/buoyancy.
+    Life,
+}
+
+/// Palette/grouping category. Orthogonal to [`Phase`] (which drives physics):
+/// this is the human-facing bucket an element shows under. One function, so the
+/// big material table stays unchanged when a row is added.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Category {
+    Earth,
+    Liquid,
+    Gas,
+    Fire,
+    Electronic,
+    Explosive,
+    Life,
+    Tool,
 }
 
 /// Static properties for one material. Pure data.
@@ -85,20 +103,23 @@ pub const FUSE: MaterialId = 32;
 pub const HYDROGEN: MaterialId = 33;
 pub const NITRO: MaterialId = 34;
 pub const TNT: MaterialId = 35;
-pub const MERCURY: MaterialId = 36;
-pub const WAX: MaterialId = 37;
-pub const MELTWAX: MaterialId = 38;
-pub const COAL: MaterialId = 39;
-pub const OBSIDIAN: MaterialId = 40;
-pub const HEATER: MaterialId = 41;
-pub const COOLER: MaterialId = 42;
-pub const BURNFUSE: MaterialId = 43;
-pub const SNOW: MaterialId = 44;
-pub const ASH: MaterialId = 45;
-pub const OXYGEN: MaterialId = 46;
-pub const SOIL: MaterialId = 47;
-pub const EMBER: MaterialId = 48;
-pub const DIAMOND: MaterialId = 49;
+pub const WAX: MaterialId = 36;
+pub const MELTWAX: MaterialId = 37;
+pub const COAL: MaterialId = 38;
+pub const OBSIDIAN: MaterialId = 39;
+pub const HEATER: MaterialId = 40;
+pub const COOLER: MaterialId = 41;
+pub const BURNFUSE: MaterialId = 42;
+pub const SNOW: MaterialId = 43;
+pub const ASH: MaterialId = 44;
+pub const OXYGEN: MaterialId = 45;
+pub const SOIL: MaterialId = 46;
+pub const EMBER: MaterialId = 47;
+pub const DIAMOND: MaterialId = 48;
+pub const FISH: MaterialId = 49;
+pub const WORM: MaterialId = 50;
+pub const ANT: MaterialId = 51;
+pub const DRAIN: MaterialId = 52;
 
 const NEVER_HOT: f32 = f32::INFINITY;
 const NEVER_COLD: f32 = f32::NEG_INFINITY;
@@ -692,22 +713,6 @@ pub static MATERIALS: &[MaterialProps] = &[
     },
     // --- Materials & states ---
     MaterialProps {
-        name: "Mercury",
-        phase: Phase::Liquid, // dense liquid metal; excellent heat conductor
-        density: 13500,       // sinks through everything
-        color: [185, 185, 195],
-        color_jitter: 10,
-        dispersion: 3,
-        life: 0,
-        decay_to: EMPTY,
-        default_temp: 20.0,
-        conductivity: 0.50,
-        high_temp: NEVER_HOT,
-        high_to: EMPTY,
-        low_temp: NEVER_COLD,
-        low_to: EMPTY,
-    },
-    MaterialProps {
         name: "Wax",
         phase: Phase::Solid, // melts when warm
         density: 9000,
@@ -916,6 +921,71 @@ pub static MATERIALS: &[MaterialProps] = &[
         low_temp: NEVER_COLD,
         low_to: EMPTY,
     },
+    // --- Critters (Phase::Life: self-propelled agents) ---
+    MaterialProps {
+        name: "Fish",
+        phase: Phase::Life, // swims through water; sinks helplessly in air
+        density: 1100,
+        color: [240, 140, 60],
+        color_jitter: 26,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.10,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Worm",
+        phase: Phase::Life, // burrows down through powders, falls in air
+        density: 1300,
+        color: [205, 120, 130],
+        color_jitter: 22,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.10,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Ant",
+        phase: Phase::Life, // walks on surfaces, falls in air, eats plant
+        density: 600,
+        color: [60, 42, 34],
+        color_jitter: 18,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.10,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
+    MaterialProps {
+        name: "Drain",
+        phase: Phase::Solid, // a sink that swallows only liquids (keeps solids)
+        density: 9000,
+        color: [55, 75, 95],
+        color_jitter: 8,
+        dispersion: 0,
+        life: 0,
+        decay_to: EMPTY,
+        default_temp: 20.0,
+        conductivity: 0.08,
+        high_temp: NEVER_HOT,
+        high_to: EMPTY,
+        low_temp: NEVER_COLD,
+        low_to: EMPTY,
+    },
 ];
 
 /// Fixed temperature a persistent source holds, if any (Heater/Cooler).
@@ -932,6 +1002,27 @@ pub fn pinned_temp(id: MaterialId) -> Option<f32> {
 #[inline]
 pub fn user_paintable(id: MaterialId) -> bool {
     !matches!(id, EMPTY | CHARGED | COOLED | LITLAMP | BURNFUSE)
+}
+
+/// Human-facing palette bucket for an element. Cross-cuts [`Phase`]: e.g. Lava
+/// is a liquid but lives under Fire & Heat, Gunpowder is a powder but under
+/// Explosives. Kept as a function so the material table needs no extra column.
+#[inline]
+pub fn category(id: MaterialId) -> Category {
+    match id {
+        WATER | SALTWATER | OIL | ACID | MELTWAX => Category::Liquid,
+        SMOKE | STEAM | FUME | HYDROGEN | OXYGEN => Category::Gas,
+        FIRE | LAVA | PLASMA | FROST | EMBER | COAL | HEATER | COOLER | CRYO | BURNFUSE => {
+            Category::Fire
+        }
+        COPPER | SPARK | CHARGED | BATTERY | LAMP | LITLAMP | FUSE | COOLED => Category::Electronic,
+        GUNPOWDER | TNT | NITRO | THERMITE => Category::Explosive,
+        PLANT | FISH | WORM | ANT => Category::Life,
+        CLONE | VOID | DRAIN => Category::Tool,
+        // Everything else (stone, sand, salt, soil, snow, ash, ice, glass,
+        // basalt, obsidian, diamond, wax, …) is plain earth/material.
+        _ => Category::Earth,
+    }
 }
 
 /// Blast radius for explosive materials; 0 = not explosive. A function rather

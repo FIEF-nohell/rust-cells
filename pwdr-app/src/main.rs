@@ -6,7 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use macroquad::prelude::*;
-use pwdr_core::material::{self, MaterialId, Phase, EMPTY};
+use pwdr_core::material::{self, Category, MaterialId, EMPTY};
 use pwdr_core::Grid;
 use std::time::Instant;
 
@@ -125,12 +125,15 @@ fn make_icon() -> macroquad::miniquad::conf::Icon {
     }
 }
 
-const PHASE_ORDER: [(Phase, &str); 5] = [
-    (Phase::Powder, "POWDERS"),
-    (Phase::Liquid, "LIQUIDS"),
-    (Phase::Gas, "GASES"),
-    (Phase::Solid, "SOLIDS"),
-    (Phase::Energy, "ENERGY"),
+const CATEGORY_ORDER: [(Category, &str); 8] = [
+    (Category::Earth, "EARTH & SOLIDS"),
+    (Category::Liquid, "LIQUIDS"),
+    (Category::Gas, "GASES"),
+    (Category::Fire, "FIRE & HEAT"),
+    (Category::Electronic, "ELECTRONICS"),
+    (Category::Explosive, "EXPLOSIVES"),
+    (Category::Life, "LIFE"),
+    (Category::Tool, "TOOLS"),
 ];
 
 fn swatch(id: MaterialId) -> Color {
@@ -555,10 +558,10 @@ fn build_palette(search: &str, x0: f32) -> (Vec<PaletteItem>, f32) {
     let pad = 10.0;
     let row_h = 23.0;
     let mut y = PANEL_LIST_TOP + 6.0;
-    for (phase, label) in PHASE_ORDER {
+    for (cat, label) in CATEGORY_ORDER {
         let mats: Vec<MaterialId> = (1..material::MATERIALS.len() as MaterialId)
             .filter(|&id| material::user_paintable(id))
-            .filter(|&id| material::props(id).phase == phase)
+            .filter(|&id| material::category(id) == cat)
             .filter(|&id| {
                 search.is_empty()
                     || material::props(id)

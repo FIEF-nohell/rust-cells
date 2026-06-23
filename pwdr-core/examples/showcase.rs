@@ -102,8 +102,8 @@ fn terrain(g: &mut Grid) {
     }
 }
 
-/// A sea basin: water, an oil slick on top, a brine patch, mercury at the bottom,
-/// seaweed (plant), and a sandy beach.
+/// A sea basin: water, an oil slick on top, a brine patch, fish swimming in it,
+/// a drain plug at the bottom, seaweed (plant) grazed by ants, and a sandy beach.
 fn ocean(g: &mut Grid) {
     let (x0, x1) = (150, 330);
     let top = 232;
@@ -113,14 +113,21 @@ fn ocean(g: &mut Grid) {
     rect(g, x0, top + 4, x1, floor, WATER);
     rect(g, x0 + 90, top + 6, x1, floor - 4, SALTWATER); // brine on the right half
     rect(g, x0, top + 2, x1, top + 3, OIL); // floating oil slick
-    rect(g, x0 + 10, floor - 2, x0 + 40, floor, MERCURY); // heavy metal puddle
-                                                          // seaweed
+                                            // a school of fish
+    for (i, fx) in (x0 + 14..x1 - 14).step_by(18).enumerate() {
+        put(g, fx, top + 12 + (i as i32 % 3) * 14, FISH);
+    }
+    // a drain plug set into the sea floor (unpause and it empties the basin)
+    rect(g, x0 + 40, floor, x0 + 46, floor, DRAIN);
+    // seaweed
     for sx in (x0 + 20..x1 - 10).step_by(22) {
         vline(g, sx, floor - 18, floor - 1, PLANT);
     }
-    // beach
+    // beach with foraging ants
     rect(g, x1, 240, x1 + 30, 252, SAND);
     rect(g, x1 + 18, 236, x1 + 26, 252, SALT); // salt flat
+    put(g, x1 + 6, 239, ANT);
+    put(g, x1 + 12, 239, ANT);
 }
 
 /// Volcano: a basalt/stone cone with a lava crater, a clone-fed lava fountain,
@@ -241,6 +248,10 @@ fn underground(g: &mut Grid) {
     rect(g, 230, 332, 290, 345, ACID);
     // salt deposit
     rect(g, 300, 318, 330, 330, SALT);
+    // a few worms burrowing in a soil pocket
+    rect(g, 95, 330, 140, 345, SOIL);
+    put(g, 105, 331, WORM);
+    put(g, 120, 331, WORM);
     // fume pocket
     rect(g, 340, 330, 370, 345, EMPTY);
     rect(g, 340, 338, 370, 345, FUME);
