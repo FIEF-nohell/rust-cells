@@ -180,7 +180,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         density: 1000,
         color: [40, 90, 200],
         color_jitter: 14,
-        dispersion: 5,
+        dispersion: 20, // sees distant descents -> a wide pool levels flat
         life: 0,
         decay_to: EMPTY,
         default_temp: 20.0,
@@ -196,7 +196,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         density: 800, // lighter than water -> floats.
         color: [90, 70, 40],
         color_jitter: 12,
-        dispersion: 4,
+        dispersion: 14, // a touch more viscous than water
         life: 0,
         decay_to: EMPTY,
         default_temp: 20.0,
@@ -262,7 +262,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         density: 2500, // heavier than water -> sinks
         color: [220, 90, 30],
         color_jitter: 22,
-        dispersion: 3,
+        dispersion: 6, // viscous: levels slowly, keeps a moundy flow
         life: 0,
         decay_to: EMPTY,
         default_temp: 1200.0,
@@ -363,7 +363,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         density: 1100,
         color: [120, 220, 60],
         color_jitter: 16,
-        dispersion: 4,
+        dispersion: 14,
         life: 0,
         decay_to: EMPTY,
         default_temp: 20.0,
@@ -587,7 +587,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         density: 1025,
         color: [60, 120, 150],
         color_jitter: 14,
-        dispersion: 5,
+        dispersion: 20,
         life: 0,
         decay_to: EMPTY,
         default_temp: 20.0,
@@ -685,7 +685,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         density: 1200,
         color: [205, 50, 70],
         color_jitter: 12,
-        dispersion: 4,
+        dispersion: 12,
         life: 0,
         decay_to: EMPTY,
         default_temp: 20.0,
@@ -734,7 +734,7 @@ pub static MATERIALS: &[MaterialProps] = &[
         density: 950,
         color: [240, 220, 165],
         color_jitter: 10,
-        dispersion: 3,
+        dispersion: 6,
         life: 0,
         decay_to: EMPTY,
         default_temp: 80.0,

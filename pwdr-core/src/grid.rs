@@ -888,9 +888,37 @@ impl Grid {
             }
             (Some(_), None) => -1,
             (None, Some(_)) => 1,
-            (None, None) => return, // nowhere lower to go: rest
+            // No reachable descent: instead of resting as a frozen ramp (which
+            // makes a wide pool look like a powder pile), equalize by pressure.
+            (None, None) => return self.level_pressure(x, y),
         };
         let _ = self.try_move(x, y, x as isize + dir, y as isize, mat);
+    }
+
+    /// Hydrostatic leveling. A liquid cell with no reachable descent normally
+    /// rests — but if it is *under pressure* (a non-empty cell directly above)
+    /// it spreads one step sideways into a strictly-empty same-row neighbour.
+    /// That neighbour is necessarily a shorter column (a deeper empty would have
+    /// been found as a descent), so every such move is downhill: the surface
+    /// variance strictly drops and the flow terminates. The unpressured top layer
+    /// never moves, so a flat pool still settles and its chunk sleeps; only
+    /// stacked liquid flows, flattening the ramps the descent-seek leaves behind.
+    fn level_pressure(&mut self, x: usize, y: usize) {
+        if y == 0 || self.material_at(x, y - 1) == EMPTY {
+            return; // top of the column: nothing pressing down, so it rests
+        }
+        let (a, b) = if self.rng.bool() {
+            (-1isize, 1)
+        } else {
+            (1, -1)
+        };
+        for dir in [a, b] {
+            let nx = x as isize + dir;
+            if self.in_bounds(nx, y as isize) && self.material_at(nx as usize, y) == EMPTY {
+                self.swap_cells(x, y, nx as usize, y);
+                return;
+            }
+        }
     }
 
     /// Gas: the inverse of liquid. Rises (up), else an up-diagonal, else
@@ -1501,6 +1529,35 @@ mod tests {
             .filter(|&x| g.material_at(x, bottom) == WATER)
             .count();
         assert!(span > 3, "water spread out along the floor, span={span}");
+    }
+
+    #[test]
+    fn water_levels_a_lopsided_pool() {
+        // A block of water dumped to one side of a flat basin must level out into
+        // a roughly horizontal surface, not freeze as a powder-like ramp.
+        let mut g = Grid::new(40, 24, 9);
+        for x in 0..40 {
+            g.set(x, 23, STONE); // floor
+        }
+        // a tall stack of water crammed into the left third
+        for y in 4..23 {
+            for x in 0..12 {
+                g.set(x, y, WATER);
+            }
+        }
+        for _ in 0..1500 {
+            g.step();
+        }
+        assert_eq!(g.awake_chunk_count(), 0, "pool settles to sleep");
+        // Surface height (topmost water row) on the far left vs far right should
+        // be close — a level pool, not a ramp piled on the left.
+        let surface = |g: &Grid, x: usize| (0..23).find(|&y| g.material_at(x, y) == WATER);
+        let left = surface(&g, 2).expect("water on the left");
+        let right = surface(&g, 37).expect("water reached the right");
+        assert!(
+            left.abs_diff(right) <= 2,
+            "surface should be level: left_top={left} right_top={right}"
+        );
     }
 
     #[test]
