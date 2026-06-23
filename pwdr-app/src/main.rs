@@ -717,16 +717,17 @@ fn draw_palette(
                     17.0,
                     tcol,
                 );
-                // Right-aligned markers: a hazard glyph (flammable / explosive)
-                // then a phase glyph (powder / liquid / gas / solid / …).
+                // Right-aligned markers: a phase glyph (powder / liquid / gas /
+                // solid / …) then a hazard glyph (flammable / explosive).
                 let gy = dy + rect.h * 0.5;
-                let haz_x = x0 + PANEL_W - 13.0;
+                let phase_x = x0 + PANEL_W - 13.0;
+                draw_phase_glyph(phase_x, gy, material::phase(*id));
+                let haz_x = phase_x - 18.0;
                 if material::is_explosive(*id) {
                     draw_burst_glyph(haz_x, gy);
                 } else if material::is_flammable(*id) {
                     draw_flame_glyph(haz_x, gy);
                 }
-                draw_phase_glyph(haz_x - 18.0, gy, material::phase(*id));
             }
         }
     }
