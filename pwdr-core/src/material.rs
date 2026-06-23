@@ -1025,6 +1025,23 @@ pub fn category(id: MaterialId) -> Category {
     }
 }
 
+/// Catches fire and spreads/sustains flame (but is not itself a detonating
+/// explosive — those are flagged by [`explosive_radius`]). Drives the palette's
+/// hazard marker. Kept as a small list rather than a table column.
+#[inline]
+pub fn is_flammable(id: MaterialId) -> bool {
+    matches!(
+        id,
+        OIL | WOOD | FUME | PLANT | COAL | FUSE | THERMITE | OXYGEN | EMBER
+    )
+}
+
+/// Detonates with a blast (radius > 0). Convenience over [`explosive_radius`].
+#[inline]
+pub fn is_explosive(id: MaterialId) -> bool {
+    explosive_radius(id) > 0
+}
+
 /// Blast radius for explosive materials; 0 = not explosive. A function rather
 /// than a table column so adding one explosive doesn't touch every row.
 #[inline]

@@ -59,6 +59,10 @@ to life.
 
 ## The element roster
 
+Each palette row shows two markers on the right: a **phase** glyph (block = solid, grains =
+powder, droplet = liquid, bubbles = gas, diamond = critter, spark = energy) and, when it
+applies, a **hazard** glyph (flame = flammable, burst = explosive).
+
 The palette groups elements by category (which cuts across the physical phase — Lava is a
 liquid but lives under Fire & Heat, Gunpowder is a powder but under Explosives):
 

@@ -6,7 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use macroquad::prelude::*;
-use pwdr_core::material::{self, Category, MaterialId, EMPTY};
+use pwdr_core::material::{self, Category, MaterialId, Phase, EMPTY};
 use pwdr_core::Grid;
 use std::time::Instant;
 
@@ -139,6 +139,83 @@ const CATEGORY_ORDER: [(Category, &str); 8] = [
 fn swatch(id: MaterialId) -> Color {
     let c = material::props(id).color;
     Color::from_rgba(c[0], c[1], c[2], 255)
+}
+
+/// A small phase mark, drawn from primitives (the bitmap font has no symbols):
+/// solid = block, powder = grains, liquid = droplet, gas = bubbles, life =
+/// diamond, energy = spark. Centered on `(cx, cy)`, ~12px.
+fn draw_phase_glyph(cx: f32, cy: f32, phase: Phase) {
+    let c = col(150, 156, 172);
+    match phase {
+        Phase::Solid => draw_rectangle(cx - 4.0, cy - 4.0, 8.0, 8.0, c),
+        Phase::Powder => {
+            draw_circle(cx, cy - 2.6, 1.7, c);
+            draw_circle(cx - 3.0, cy + 2.2, 1.7, c);
+            draw_circle(cx + 3.0, cy + 2.2, 1.7, c);
+        }
+        Phase::Liquid => {
+            draw_triangle(
+                vec2(cx, cy - 5.0),
+                vec2(cx - 3.6, cy + 1.0),
+                vec2(cx + 3.6, cy + 1.0),
+                c,
+            );
+            draw_circle(cx, cy + 1.6, 3.4, c);
+        }
+        Phase::Gas => {
+            draw_circle_lines(cx - 2.8, cy + 2.0, 2.0, 1.0, c);
+            draw_circle_lines(cx + 2.6, cy + 0.8, 1.7, 1.0, c);
+            draw_circle_lines(cx - 0.4, cy - 3.0, 1.8, 1.0, c);
+        }
+        Phase::Life => {
+            draw_triangle(
+                vec2(cx, cy - 5.0),
+                vec2(cx - 4.0, cy),
+                vec2(cx + 4.0, cy),
+                c,
+            );
+            draw_triangle(
+                vec2(cx, cy + 5.0),
+                vec2(cx - 4.0, cy),
+                vec2(cx + 4.0, cy),
+                c,
+            );
+        }
+        Phase::Energy => {
+            draw_line(cx - 4.5, cy, cx + 4.5, cy, 1.5, c);
+            draw_line(cx, cy - 4.5, cx, cy + 4.5, 1.5, c);
+            draw_line(cx - 3.0, cy - 3.0, cx + 3.0, cy + 3.0, 1.0, c);
+            draw_line(cx - 3.0, cy + 3.0, cx + 3.0, cy - 3.0, 1.0, c);
+        }
+        Phase::Empty => {}
+    }
+}
+
+/// A flame mark for flammable elements.
+fn draw_flame_glyph(cx: f32, cy: f32) {
+    draw_triangle(
+        vec2(cx, cy - 6.0),
+        vec2(cx - 4.0, cy + 4.0),
+        vec2(cx + 4.0, cy + 4.0),
+        col(255, 140, 40),
+    );
+    draw_triangle(
+        vec2(cx, cy - 1.0),
+        vec2(cx - 2.3, cy + 4.0),
+        vec2(cx + 2.3, cy + 4.0),
+        col(255, 222, 96),
+    );
+}
+
+/// A burst/star mark for explosive elements.
+fn draw_burst_glyph(cx: f32, cy: f32) {
+    let r = col(240, 72, 60);
+    for k in 0..8 {
+        let ang = k as f32 * std::f32::consts::FRAC_PI_4;
+        let (s, c) = ang.sin_cos();
+        draw_line(cx, cy, cx + c * 5.5, cy + s * 5.5, 1.6, r);
+    }
+    draw_circle(cx, cy, 1.9, col(255, 204, 86));
 }
 
 /// Cell grid dimensions that fit the current window (leaving room for the panel).
@@ -640,6 +717,16 @@ fn draw_palette(
                     17.0,
                     tcol,
                 );
+                // Right-aligned markers: a hazard glyph (flammable / explosive)
+                // then a phase glyph (powder / liquid / gas / solid / …).
+                let gy = dy + rect.h * 0.5;
+                let haz_x = x0 + PANEL_W - 13.0;
+                if material::is_explosive(*id) {
+                    draw_burst_glyph(haz_x, gy);
+                } else if material::is_flammable(*id) {
+                    draw_flame_glyph(haz_x, gy);
+                }
+                draw_phase_glyph(haz_x - 18.0, gy, material::phase(*id));
             }
         }
     }
