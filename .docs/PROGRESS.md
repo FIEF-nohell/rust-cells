@@ -310,3 +310,40 @@ categorized + searchable palette, pause/step, readouts, and deterministic save/l
   the grid to fit (correct mouse mapping at the new size), Esc keeps the current canvas.
 - Tests: +paint-empty-only, +free-spark-leaves-no-copper; spark conduction test updated.
   45 unit + 2 proptest green; golden regenerated (paint RNG consumption changed).
+
+---
+
+## UX pass (editing + discoverability)
+
+A round of high-leverage usability work. Core stays the single source of truth; the
+app only wires input/draw to new pure-core helpers.
+
+**Core (pwdr-core), all headless-tested:**
+- `paint_over` / `stamp` — a paint variant that **overwrites** existing matter (the
+  original `paint` still fills empty-only). One private `stamp(overwrite)` backs both.
+- `paint_line` — Bresenham over grid cells, stamping the brush disc at each step. This
+  is the **continuous-stroke** primitive: a fast mouse drag becomes a solid line instead
+  of dotted per-frame stamps (the old single-stamp-per-frame defect).
+- `flood_fill` — 4-connected fill of the contiguous region matching the clicked cell,
+  through `set` so transients/temperature/wake bits stay correct. No-op when target ==
+  fill; an open region fills to its walls.
+- `material::blurb(id)` — one-line, human-facing description + key interactions per
+  paintable element (a `match`, not a table column). A test asserts **every** paintable
+  id has non-empty text, so a new element can't ship without a tooltip.
+
+**App (pwdr-app):**
+- **Continuous strokes + eyedropper + overwrite.** Drags interpolate via `paint_line`
+  (no gaps). `Shift`+left overwrites matter. `Alt`+left is an eyedropper (picks the cell's
+  material). Search typing now skips while Ctrl/Alt are held so shortcuts don't leak.
+- **Undo / redo.** A capped ring (24) of `serialize()` snapshots. `Ctrl+Z` / `Ctrl+Y`
+  (or `Ctrl+Shift+Z`). Snapshot taken before each stroke start, flood fill, clear, resize
+  wipe, and load. Restore adopts the snapshot's dimensions (resizes the window if needed).
+- **Variable sim speed.** Discrete `0.25x..8x` via `,` / `.`; scales the fixed-timestep
+  `dt` and substep cap. Single-step ignores it. Shown in the status card.
+- **Flood-fill tool.** `Ctrl`+left fills with the selected element, `Ctrl`+right with empty.
+- **Discoverability.** Palette **hover tooltip** (name, phase, density, blurb, hazard) and
+  an **`F1` help overlay** (controls + an interactions cheat-sheet) surface the reaction web.
+
+**Tests:** +paint-empty-only, +paint-over, +paint_line-no-gaps, +flood-fill (enclosed
+pocket / contiguous-only / same-material no-op), +every-paintable-has-a-blurb. **88 unit +
+2 proptest green;** golden hash unchanged (no change to the simulation step).

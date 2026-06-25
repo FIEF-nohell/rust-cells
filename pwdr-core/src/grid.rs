@@ -2937,7 +2937,11 @@ mod tests {
             .flat_map(|y| (0..32).map(move |x| (x, y)))
             .filter(|&(x, y)| g.material_at(x, y) == STONE)
             .collect();
-        assert!(painted.len() >= 18, "line spans its length: {}", painted.len());
+        assert!(
+            painted.len() >= 18,
+            "line spans its length: {}",
+            painted.len()
+        );
     }
 
     #[test]
@@ -2954,7 +2958,11 @@ mod tests {
         }
         g.flood_fill(7, 7, WATER);
         assert_eq!(g.material_at(7, 7), WATER, "interior filled");
-        assert_eq!(g.material_at(4, 4), WATER, "fill reaches the corners inside");
+        assert_eq!(
+            g.material_at(4, 4),
+            WATER,
+            "fill reaches the corners inside"
+        );
         assert_eq!(g.material_at(3, 3), STONE, "walls untouched");
         assert_eq!(g.material_at(0, 0), EMPTY, "fill did not escape the box");
     }

@@ -14,6 +14,10 @@ const SCALE: f32 = 3.0; // screen pixels per cell
 const PANEL_W: f32 = 248.0;
 const SEED: u64 = 0xC0FFEE;
 const MAX_BRUSH: usize = 64;
+/// Discrete simulation-speed multipliers, selected with `,` / `.`.
+const SPEEDS: [f32; 6] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
+/// How many undo snapshots to keep (each is a serialized grid).
+const UNDO_CAP: usize = 24;
 /// Height of the bottom control bar, reserved below the canvas.
 const BAR_H: f32 = 26.0;
 /// Y where the scrollable element list begins (below the panel header).
@@ -259,6 +263,11 @@ async fn main() {
     let mut view_x = 0.0f32; // top-left of the view, in grid cells
     let mut view_y = 0.0f32;
     let mut prev_mouse = (0.0f32, 0.0f32);
+    let mut speed_idx = 2usize; // index into SPEEDS; 2 = 1.0x
+    let mut undo: Vec<Vec<u8>> = Vec::new();
+    let mut redo: Vec<Vec<u8>> = Vec::new();
+    let mut stroke_prev: Option<(isize, isize)> = None; // last cell painted this drag
+    let mut show_help = false;
     let showcase_path = desktop_path("rust-cells-showcase.save");
     let desktop_dir = showcase_path
         .parent()
@@ -283,6 +292,7 @@ async fn main() {
         }
         if pending_resize {
             if is_key_pressed(KeyCode::Enter) {
+                push_undo(&mut undo, &mut redo, &grid);
                 win_w = screen_width();
                 win_h = screen_height();
                 let (ngw, ngh) = grid_dims(win_w, win_h);
@@ -305,10 +315,16 @@ async fn main() {
             continue;
         }
 
-        // --- palette search typing (alphabetic only, so controls never collide) ---
+        // --- modifier keys (read once; used by typing guard + canvas tools) ---
+        let ctrl = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
+        let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+        let alt = is_key_down(KeyCode::LeftAlt) || is_key_down(KeyCode::RightAlt);
+
+        // --- palette search typing (letters only; skip while a modifier is held
+        // so Ctrl+Z etc. never leak into the search box) ---
         while let Some(c) = get_char_pressed() {
             let lc = c.to_ascii_lowercase();
-            if lc.is_ascii_alphabetic() {
+            if lc.is_ascii_alphabetic() && !ctrl && !alt {
                 search.push(lc);
             }
         }
@@ -316,12 +332,20 @@ async fn main() {
             search.pop();
         }
         if is_key_pressed(KeyCode::Escape) {
-            search.clear();
+            // Esc closes help first, then clears the search.
+            if show_help {
+                show_help = false;
+            } else {
+                search.clear();
+            }
         }
 
         // --- controls ---
         if is_key_pressed(KeyCode::Space) {
             paused = !paused;
+        }
+        if is_key_pressed(KeyCode::F1) {
+            show_help = !show_help;
         }
         if is_key_pressed(KeyCode::F2) {
             heat_overlay = !heat_overlay;
@@ -330,11 +354,54 @@ async fn main() {
         if is_key_pressed(KeyCode::Right) {
             do_single_step = true;
         }
+        // Simulation speed: `,` slower, `.` faster (clamped to the SPEEDS table).
+        if is_key_pressed(KeyCode::Comma) {
+            speed_idx = speed_idx.saturating_sub(1);
+        }
+        if is_key_pressed(KeyCode::Period) {
+            speed_idx = (speed_idx + 1).min(SPEEDS.len() - 1);
+        }
+        let speed = SPEEDS[speed_idx];
+
+        // Undo (Ctrl+Z) / Redo (Ctrl+Y or Ctrl+Shift+Z). Snapshots are full
+        // serialized grids; restoring adopts the snapshot's dimensions.
+        if ctrl && !shift && is_key_pressed(KeyCode::Z) {
+            if let Some(blob) = undo.pop() {
+                redo.push(grid.serialize());
+                restore_grid(
+                    &blob,
+                    &mut grid,
+                    &mut gw,
+                    &mut gh,
+                    &mut image,
+                    &mut texture,
+                    &mut win_w,
+                    &mut win_h,
+                    &mut resize_grace,
+                );
+                status = "undo".into();
+            }
+        }
+        if ctrl && (is_key_pressed(KeyCode::Y) || (shift && is_key_pressed(KeyCode::Z))) {
+            if let Some(blob) = redo.pop() {
+                undo.push(grid.serialize());
+                restore_grid(
+                    &blob,
+                    &mut grid,
+                    &mut gw,
+                    &mut gh,
+                    &mut image,
+                    &mut texture,
+                    &mut win_w,
+                    &mut win_h,
+                    &mut resize_grace,
+                );
+                status = "redo".into();
+            }
+        }
 
         let (mx, my) = mouse_position();
         let in_panel = mx >= panel_x;
-
-        let ctrl = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
 
         // Zoom toward a screen point, keeping that point fixed.
         let apply_zoom = |zoom: &mut f32, vx: &mut f32, vy: &mut f32, sx: f32, sy: f32, f: f32| {
@@ -409,6 +476,7 @@ async fn main() {
         view_x = view_x.clamp(0.0, (gw as f32 - vis_w).max(0.0));
         view_y = view_y.clamp(0.0, (gh as f32 - vis_h).max(0.0));
         if is_key_pressed(KeyCode::Delete) {
+            push_undo(&mut undo, &mut redo, &grid);
             grid = Grid::new(gw, gh, SEED);
             status = "cleared".into();
         }
@@ -443,6 +511,7 @@ async fn main() {
                 .and_then(|b| Grid::deserialize(&b))
             {
                 Some(g) => {
+                    push_undo(&mut undo, &mut redo, &grid);
                     gw = g.width();
                     gh = g.height();
                     grid = g;
@@ -469,34 +538,66 @@ async fn main() {
         let max_scroll = (content_h - (screen_height() - 8.0)).max(0.0);
         palette_scroll = palette_scroll.min(max_scroll);
 
-        // --- mouse: palette click vs. brush paint ---
-        if is_mouse_button_pressed(MouseButton::Left) && in_panel {
+        // --- palette hover (tooltip) + click-to-select ---
+        let mut hovered_mat: Option<MaterialId> = None;
+        if in_panel {
             for entry in &palette {
                 if let PaletteItem::Mat(id, rect) = entry {
                     // rects are in base (unscrolled) coords; shift the test point.
                     if rect.contains(vec2(mx, my + palette_scroll)) {
-                        selected = *id;
+                        hovered_mat = Some(*id);
+                        if is_mouse_button_pressed(MouseButton::Left) {
+                            selected = *id;
+                        }
                     }
                 }
             }
         }
-        let painting = !in_panel
-            && !over_mm
-            && my < canvas_h
-            && (is_mouse_button_down(MouseButton::Left)
-                || is_mouse_button_down(MouseButton::Right));
-        if painting {
-            let gx = (view_x + mx / psc).floor();
-            let gy = (view_y + my / psc).floor();
-            if gx >= 0.0 && gy >= 0.0 && (gx as usize) < gw && (gy as usize) < gh {
-                // Left paints (only into empty cells); right erases anything.
-                let mat = if is_mouse_button_down(MouseButton::Right) {
-                    EMPTY
-                } else {
-                    selected
-                };
-                grid.paint(gx as usize, gy as usize, brush, mat);
+
+        // --- canvas tools: eyedropper / flood-fill / brush stroke ---
+        let on_canvas = !in_panel && !over_mm && my < canvas_h;
+        let cell = (
+            (view_x + mx / psc).floor() as isize,
+            (view_y + my / psc).floor() as isize,
+        );
+        let in_grid =
+            cell.0 >= 0 && cell.1 >= 0 && (cell.0 as usize) < gw && (cell.1 as usize) < gh;
+        if on_canvas && in_grid {
+            let (gx, gy) = (cell.0 as usize, cell.1 as usize);
+            let lp = is_mouse_button_pressed(MouseButton::Left);
+            let rp = is_mouse_button_pressed(MouseButton::Right);
+            let ld = is_mouse_button_down(MouseButton::Left);
+            let rd = is_mouse_button_down(MouseButton::Right);
+
+            if alt && lp {
+                // Eyedropper: pick the material under the cursor.
+                let m = grid.material_at(gx, gy);
+                if material::user_paintable(m) {
+                    selected = m;
+                    status = format!("picked {}", material::props(m).name);
+                }
+            } else if ctrl && (lp || rp) {
+                // Flood fill the contiguous region (right = fill with empty).
+                push_undo(&mut undo, &mut redo, &grid);
+                grid.flood_fill(gx, gy, if rp { EMPTY } else { selected });
+                status = "filled".into();
+            } else if (ld || rd) && !ctrl && !alt {
+                // Continuous brush stroke. Snapshot once at the start of a drag,
+                // then paint a line from the previous cell so fast drags leave no
+                // gaps. Left paints (Shift = overwrite matter); Right erases.
+                if lp || rp {
+                    push_undo(&mut undo, &mut redo, &grid);
+                    stroke_prev = None;
+                }
+                let mat = if rd { EMPTY } else { selected };
+                let overwrite = shift && !rd;
+                let (px, py) = stroke_prev.unwrap_or(cell);
+                grid.paint_line(px, py, cell.0, cell.1, brush, mat, overwrite);
+                stroke_prev = Some(cell);
             }
+        }
+        if !is_mouse_button_down(MouseButton::Left) && !is_mouse_button_down(MouseButton::Right) {
+            stroke_prev = None; // drag ended; next press starts a fresh stroke
         }
 
         // --- fixed-timestep simulation, timed ---
@@ -508,12 +609,16 @@ async fn main() {
                 last_tick_ms = t.elapsed().as_secs_f32() * 1000.0;
             }
         } else {
+            // Sim speed scales the timestep: slow-mo lengthens dt (fewer steps),
+            // fast-forward shortens it (more steps, with a higher substep cap).
+            let dt = (TICK_DT / speed as f64).max(1.0 / 480.0);
+            let cap = ((8.0 * speed).ceil() as i32).clamp(1, 64);
             acc += get_frame_time() as f64;
             let t = Instant::now();
             let mut n = 0;
-            while acc >= TICK_DT && n < 8 {
+            while acc >= dt && n < cap {
                 grid.step();
-                acc -= TICK_DT;
+                acc -= dt;
                 n += 1;
             }
             if n > 0 {
@@ -606,6 +711,7 @@ async fn main() {
             brush,
             paused,
             heat_overlay,
+            speed,
             zoom,
             smooth_fps,
             smooth_tick_ms,
@@ -618,6 +724,14 @@ async fn main() {
             panel_x,
             canvas_h,
         );
+        // Tooltip for the hovered palette row (drawn over the panel).
+        if let Some(id) = hovered_mat {
+            draw_tooltip(id, panel_x, my);
+        }
+        // Help overlay on top of everything.
+        if show_help {
+            draw_help();
+        }
 
         next_frame().await;
     }
@@ -772,6 +886,7 @@ fn draw_hud(
     brush: usize,
     paused: bool,
     heat_overlay: bool,
+    speed: f32,
     zoom: f32,
     fps: f32,
     tick_ms: f32,
@@ -792,13 +907,19 @@ fn draw_hud(
 
     let tx = cx + 12.0;
     draw_text("rust-cells", tx, cy + 22.0, 22.0, c_text());
-    let state = if paused { "PAUSED" } else { "LIVE" };
+    let state = if paused {
+        "PAUSED".to_string()
+    } else if (speed - 1.0).abs() < 0.01 {
+        "LIVE".to_string()
+    } else {
+        format!("{speed}x")
+    };
     let state_col = if paused {
         c_accent()
     } else {
         col(120, 210, 140)
     };
-    draw_text(state, cx + cw - 64.0, cy + 20.0, 18.0, state_col);
+    draw_text(&state, cx + cw - 64.0, cy + 20.0, 18.0, state_col);
 
     draw_text(
         &format!(
@@ -862,7 +983,7 @@ fn draw_hud(
     draw_rectangle(0.0, sim_h, sim_w, BAR_H, c_header());
     draw_line(0.0, sim_h, sim_w, sim_h, 1.0, cola(70, 74, 90, 200));
     draw_text(
-        "L paint   R erase   wheel brush   +/- zoom   0 reset   mid-drag/minimap pan   Space pause   F2 heat   F5/F9 save/load   F8 showcase",
+        "L paint  R erase  Shift overwrite  Alt pick  Ctrl fill  wheel brush  ,/. speed  Ctrl+Z/Y undo  Space pause  F1 help",
         10.0,
         sim_h + 17.0,
         15.0,
@@ -901,6 +1022,177 @@ fn draw_resize_prompt(gw: usize, gh: usize) {
         cy + 98.0,
         18.0,
         Color::from_rgba(180, 220, 180, 255),
+    );
+}
+
+/// Push the current grid onto the undo stack (capped) and clear the redo stack.
+/// Called before any destructive edit (stroke start, fill, clear, resize, load).
+fn push_undo(undo: &mut Vec<Vec<u8>>, redo: &mut Vec<Vec<u8>>, grid: &Grid) {
+    undo.push(grid.serialize());
+    if undo.len() > UNDO_CAP {
+        undo.remove(0);
+    }
+    redo.clear();
+}
+
+/// Replace `grid` (and its texture/dimensions) from a serialized snapshot. If
+/// the snapshot's size differs from the current canvas, the window is resized to
+/// match, mirroring the load path.
+#[allow(clippy::too_many_arguments)]
+fn restore_grid(
+    blob: &[u8],
+    grid: &mut Grid,
+    gw: &mut usize,
+    gh: &mut usize,
+    image: &mut Image,
+    texture: &mut Texture2D,
+    win_w: &mut f32,
+    win_h: &mut f32,
+    resize_grace: &mut i32,
+) {
+    if let Some(g) = Grid::deserialize(blob) {
+        let (nw, nh) = (g.width(), g.height());
+        let dims_changed = nw != *gw || nh != *gh;
+        *gw = nw;
+        *gh = nh;
+        *grid = g;
+        let (ni, nt) = make_texture(nw, nh);
+        *image = ni;
+        *texture = nt;
+        if dims_changed {
+            let (tw, th) = (nw as f32 * SCALE + PANEL_W, nh as f32 * SCALE + BAR_H);
+            request_new_screen_size(tw, th);
+            *win_w = tw;
+            *win_h = th;
+            *resize_grace = 20;
+        }
+    }
+}
+
+/// Greedy word-wrap to at most `max_chars` per line (the bitmap font is roughly
+/// monospaced at the sizes we draw, so a char budget is good enough).
+fn wrap(text: &str, max_chars: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut cur = String::new();
+    for word in text.split_whitespace() {
+        if cur.is_empty() {
+            cur = word.to_string();
+        } else if cur.len() + 1 + word.len() <= max_chars {
+            cur.push(' ');
+            cur.push_str(word);
+        } else {
+            lines.push(std::mem::take(&mut cur));
+            cur = word.to_string();
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    lines
+}
+
+/// A hover tooltip for a palette element: name, phase + density, the one-line
+/// blurb, and a hazard tag. Drawn to the left of the panel so it never overlaps
+/// the list it describes.
+fn draw_tooltip(id: MaterialId, panel_x: f32, my: f32) {
+    let p = material::props(id);
+    let phase = match material::phase(id) {
+        Phase::Powder => "Powder",
+        Phase::Liquid => "Liquid",
+        Phase::Gas => "Gas",
+        Phase::Solid => "Solid",
+        Phase::Energy => "Energy",
+        Phase::Life => "Critter",
+        Phase::Empty => "-",
+    };
+    let lines = wrap(material::blurb(id), 34);
+    let haz = if material::is_explosive(id) {
+        "Explosive"
+    } else if material::is_flammable(id) {
+        "Flammable"
+    } else {
+        ""
+    };
+    let line_h = 17.0;
+    let w = 244.0;
+    let h = 56.0 + lines.len() as f32 * line_h + if haz.is_empty() { 0.0 } else { line_h } + 10.0;
+    let x = (panel_x - w - 10.0).max(8.0);
+    let y = my.min(screen_height() - h - 8.0).max(8.0);
+    draw_rectangle(x, y, w, h, cola(18, 19, 26, 244));
+    draw_rectangle(x, y, 3.0, h, c_accent());
+    draw_rectangle_lines(x, y, w, h, 1.0, cola(80, 84, 100, 220));
+    let tx = x + 12.0;
+    draw_rectangle(tx, y + 12.0, 12.0, 12.0, swatch(id));
+    draw_rectangle_lines(tx, y + 12.0, 12.0, 12.0, 1.0, cola(0, 0, 0, 150));
+    draw_text(p.name, tx + 20.0, y + 23.0, 19.0, c_text());
+    draw_text(
+        &format!("{phase}   density {}", p.density),
+        tx,
+        y + 42.0,
+        14.0,
+        c_muted(),
+    );
+    let mut yy = y + 62.0;
+    for ln in &lines {
+        draw_text(ln, tx, yy, 15.0, col(202, 206, 216));
+        yy += line_h;
+    }
+    if !haz.is_empty() {
+        draw_text(haz, tx, yy, 14.0, col(240, 150, 90));
+    }
+}
+
+/// Full-screen controls + interaction cheat-sheet, toggled with F1.
+fn draw_help() {
+    draw_rectangle(
+        0.0,
+        0.0,
+        screen_width(),
+        screen_height(),
+        cola(0, 0, 0, 180),
+    );
+    let (w, h) = (564.0, 428.0);
+    let (x, y) = ((screen_width() - w) * 0.5, (screen_height() - h) * 0.5);
+    draw_rectangle(x, y, w, h, col(24, 26, 33));
+    draw_rectangle(x, y, w, 3.0, c_accent());
+    draw_rectangle_lines(x, y, w, h, 1.0, cola(90, 94, 110, 230));
+    draw_text("rust-cells - controls", x + 20.0, y + 34.0, 24.0, c_text());
+    let rows = [
+        ("Left drag", "paint selected element (into empty)"),
+        ("Shift + left", "overwrite existing matter"),
+        ("Right drag", "erase"),
+        ("Alt + left", "eyedropper - pick element under cursor"),
+        ("Ctrl + left/right", "flood fill region (right = empty)"),
+        ("Mouse wheel", "brush size   (Ctrl+wheel = zoom)"),
+        (", / .", "slower / faster simulation"),
+        ("Ctrl+Z / Ctrl+Y", "undo / redo"),
+        ("Space / Right", "pause / single step"),
+        ("+ / - / 0", "zoom in / out / reset"),
+        ("Mid-drag, minimap", "pan the view"),
+        ("F2", "temperature overlay"),
+        ("F5 / F9 / F8", "save / load / load showcase"),
+        ("Del", "clear canvas"),
+        ("type, click swatch", "filter palette, select element"),
+    ];
+    let mut yy = y + 64.0;
+    for (k, d) in rows {
+        draw_text(k, x + 20.0, yy, 16.0, c_accent());
+        draw_text(d, x + 214.0, yy, 16.0, col(205, 209, 219));
+        yy += 22.0;
+    }
+    draw_text(
+        "Try: oil on water then a spark, salt on ice, lava into water, wire battery-fuse-TNT.",
+        x + 20.0,
+        yy + 10.0,
+        14.0,
+        c_muted(),
+    );
+    draw_text(
+        "F1 or Esc to close",
+        x + 20.0,
+        y + h - 16.0,
+        15.0,
+        c_muted(),
     );
 }
 
