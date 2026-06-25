@@ -579,11 +579,12 @@ async fn main() {
                     selected = m;
                     status = format!("picked {}", material::props(m).name);
                 }
-            } else if ctrl && (lp || rp) {
-                // Flood fill the contiguous region (right = fill with empty).
-                push_undo(&mut undo, &mut redo, &grid);
-                grid.flood_fill(gx, gy, if rp { EMPTY } else { selected });
-                status = "filled".into();
+            // Flood fill (Ctrl + click) disabled for now: too easy to trigger by
+            // accident. Core `Grid::flood_fill` stays; re-enable by restoring this.
+            // } else if ctrl && (lp || rp) {
+            //     push_undo(&mut undo, &mut redo, &grid);
+            //     grid.flood_fill(gx, gy, if rp { EMPTY } else { selected });
+            //     status = "filled".into();
             } else if (ld || rd) && !ctrl {
                 // Continuous brush stroke. Snapshot once at the start of a drag,
                 // then paint a line from the previous cell so fast drags leave no
@@ -986,7 +987,7 @@ fn draw_hud(
     draw_rectangle(0.0, sim_h, sim_w, BAR_H, c_header());
     draw_line(0.0, sim_h, sim_w, sim_h, 1.0, cola(70, 74, 90, 200));
     draw_text(
-        "L paint  R erase  Shift overwrite  Mid-click pick  Ctrl fill  wheel brush  +/- speed  Ctrl+Z/Y undo  Space pause  F1 help",
+        "L paint  R erase  Shift overwrite  Mid-click pick  wheel brush  +/- speed  Ctrl+Z/Y undo  Space pause  F1 help",
         10.0,
         sim_h + 17.0,
         15.0,
@@ -1165,7 +1166,6 @@ fn draw_help() {
         ("Shift + left", "overwrite existing matter"),
         ("Right drag", "erase"),
         ("Middle click", "eyedropper - pick element under cursor"),
-        ("Ctrl + left/right", "flood fill region (right = empty)"),
         ("Mouse wheel", "brush size   (Ctrl+wheel = zoom)"),
         ("+ / -", "faster / slower simulation"),
         ("Ctrl+Z / Ctrl+Y", "undo / redo"),

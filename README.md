@@ -50,7 +50,6 @@ to life.
 | Shift + left | overwrite existing matter, not just empty cells |
 | Right drag | erase |
 | Middle click | eyedropper: pick the element under the cursor |
-| Ctrl + left / right | flood fill the contiguous region (right fills with empty) |
 | Mouse wheel | brush size (smallest is a single grid-snapped cell) |
 | `+` / `-` | faster / slower simulation (0.25x to 8x) |
 | Ctrl+Z / Ctrl+Y | undo / redo |
