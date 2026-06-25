@@ -1485,6 +1485,65 @@ pub fn phase(id: MaterialId) -> Phase {
     props(id).phase
 }
 
+/// One-line, human-facing description of what an element does and its notable
+/// interactions. Surfaced by the app as a palette tooltip so the reaction web is
+/// discoverable. A plain `match` rather than a table column: it keeps the big
+/// [`MATERIALS`] table free of prose. Every [`user_paintable`] id has text;
+/// hidden internal states fall through to "".
+pub fn blurb(id: MaterialId) -> &'static str {
+    match id {
+        STONE => "Inert wall. Blast-proof, but lava and thermite melt through it.",
+        SAND => "Heavy inert powder. Melts to glass when very hot.",
+        WATER => "Seeks its level. Freezes to ice, boils to steam.",
+        OIL => "Floats on water. Flammable; self-ignites when hot.",
+        SMOKE => "Light gas. Rises and fades away.",
+        ICE => "Melts to water. Salt turns it to non-freezing brine.",
+        STEAM => "Hot gas. Rises, then condenses back to water.",
+        LAVA => "Molten rock. Cools to basalt/obsidian on water; melts stone.",
+        BASALT => "Cooled lava. Remelts at extreme heat.",
+        COPPER => "Conductor. Carries a spark's charge and conducts heat far.",
+        SPARK => "Igniter. Lights wires, oil and fuses, then vanishes.",
+        FIRE => "Spreads to fuel, burns out, leaves smoke.",
+        ACID => "Corrosive liquid. Dissolves most matter and is used up doing so.",
+        FUME => "Flammable gas. Carries flame upward.",
+        GUNPOWDER => "Explosive powder. Chain-detonates.",
+        CRYO => "Cold source. Freezes nearby water to ice.",
+        WOOD => "Flammable solid. Fire creeps along it.",
+        GLASS => "Inert. What sand melts into.",
+        PLASMA => "Searing, no-trace heat 'flame'.",
+        FROST => "Freezing, no-trace cold 'flame'.",
+        CLONE => "Endlessly copies whatever element touches it.",
+        VOID => "Infinite sink. Swallows anything it touches.",
+        SALT => "Melts ice into non-freezing brine.",
+        PLANT => "Grows over soil. Ants graze it; fire burns it.",
+        THERMITE => "Flashes to molten slag. Melts through stone.",
+        SALTWATER => "Brine. Salty water that will not freeze.",
+        BATTERY => "Endless charge source for wires.",
+        LAMP => "Lights when charged. Lit lamps chain to neighbours.",
+        FUSE => "Burns along its length to detonate bombs.",
+        HYDROGEN => "Light gas. Violently explosive.",
+        NITRO => "Extremely volatile. Large blast.",
+        TNT => "Big blast. Chain-detonates with other explosives.",
+        WAX => "Solid. Melts to molten wax when heated.",
+        MELTWAX => "Molten wax. Resolidifies when it cools.",
+        COAL => "Slow-burning solid fuel.",
+        OBSIDIAN => "Glassy rock from fast-cooled lava.",
+        HEATER => "Persistent heat source.",
+        COOLER => "Persistent cold source.",
+        SNOW => "Light powder. Melts to water.",
+        ASH => "Light powder. Burn residue.",
+        OXYGEN => "Feeds fire. Flammable gas.",
+        SOIL => "Earthy powder. Plant grows on it.",
+        EMBER => "Glowing hot powder. Ignites fuel it touches.",
+        DIAMOND => "The only fireproof, acid-proof, blast-proof solid.",
+        FISH => "Swims through water. Flops when stranded.",
+        WORM => "Burrows down through powders.",
+        ANT => "Walks on surfaces and grazes on plant.",
+        DRAIN => "Liquid-only sink. Empties a tank without eating the walls.",
+        _ => "",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1500,6 +1559,19 @@ mod tests {
     #[test]
     fn empty_is_phase_empty() {
         assert_eq!(phase(EMPTY), Phase::Empty);
+    }
+
+    #[test]
+    fn every_paintable_element_has_a_blurb() {
+        for id in 1..MATERIALS.len() as MaterialId {
+            if user_paintable(id) {
+                assert!(
+                    !blurb(id).is_empty(),
+                    "{} (id {id}) is paintable but has no blurb",
+                    props(id).name
+                );
+            }
+        }
     }
 
     #[test]

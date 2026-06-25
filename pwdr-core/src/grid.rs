@@ -179,6 +179,18 @@ impl Grid {
     /// material only **writes into empty cells** (never overwrites existing
     /// matter); painting `EMPTY` erases anything in the disc.
     pub fn paint(&mut self, cx: usize, cy: usize, radius: usize, mat: MaterialId) {
+        self.stamp(cx, cy, radius, mat, false);
+    }
+
+    /// Like [`Grid::paint`] but **overwrites existing matter** as well as empty
+    /// cells. Erasing (`EMPTY`) behaves identically to `paint`.
+    pub fn paint_over(&mut self, cx: usize, cy: usize, radius: usize, mat: MaterialId) {
+        self.stamp(cx, cy, radius, mat, true);
+    }
+
+    /// Stamp a filled disc. `overwrite` lets a real material replace existing
+    /// matter; otherwise it only fills empty cells. Erasing always clears.
+    fn stamp(&mut self, cx: usize, cy: usize, radius: usize, mat: MaterialId, overwrite: bool) {
         let erasing = mat == EMPTY;
         let r = radius as isize;
         let (cx, cy) = (cx as isize, cy as isize);
@@ -192,9 +204,86 @@ impl Grid {
                     continue;
                 }
                 let (x, y) = (x as usize, y as usize);
-                if erasing || self.is_empty(x, y) {
+                if erasing || overwrite || self.is_empty(x, y) {
                     self.set(x, y, mat);
                 }
+            }
+        }
+    }
+
+    /// Stamp a brush disc of radius `radius` along the straight line of grid
+    /// cells from `(x0,y0)` to `(x1,y1)` (inclusive). This is the bucket the app
+    /// uses to turn a fast mouse drag into a continuous stroke instead of dotted
+    /// stamps. `overwrite` and erasing follow [`Grid::stamp`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn paint_line(
+        &mut self,
+        x0: isize,
+        y0: isize,
+        x1: isize,
+        y1: isize,
+        radius: usize,
+        mat: MaterialId,
+        overwrite: bool,
+    ) {
+        // Integer Bresenham over grid cells; stamp a disc at every step.
+        let (mut x, mut y) = (x0, y0);
+        let dx = (x1 - x0).abs();
+        let dy = -(y1 - y0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut err = dx + dy;
+        loop {
+            if self.in_bounds(x, y) {
+                self.stamp(x as usize, y as usize, radius, mat, overwrite);
+            }
+            if x == x1 && y == y1 {
+                break;
+            }
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                x += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y += sy;
+            }
+        }
+    }
+
+    /// Flood fill (4-connected) from `(x, y)`: replace the contiguous region of
+    /// cells matching the clicked cell's material with `mat`. A no-op when the
+    /// target already is `mat`. Bounded by the grid; an open region fills to its
+    /// walls. Goes through [`Grid::set`] so transient counts, temperature, and
+    /// chunk wake bits stay correct.
+    pub fn flood_fill(&mut self, x: usize, y: usize, mat: MaterialId) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
+        let target = self.material_at(x, y);
+        if target == mat {
+            return;
+        }
+        let mut stack = vec![(x, y)];
+        while let Some((cx, cy)) = stack.pop() {
+            // Only cells still showing the target material (set() below changes
+            // them, so each cell is visited at most once).
+            if self.material_at(cx, cy) != target {
+                continue;
+            }
+            self.set(cx, cy, mat);
+            if cx > 0 {
+                stack.push((cx - 1, cy));
+            }
+            if cx + 1 < self.width {
+                stack.push((cx + 1, cy));
+            }
+            if cy > 0 {
+                stack.push((cx, cy - 1));
+            }
+            if cy + 1 < self.height {
+                stack.push((cx, cy + 1));
             }
         }
     }
@@ -2813,4 +2902,80 @@ mod tests {
 
     // Regenerate: temporarily `assert_eq!(g.hash(), 0)` and read the panic msg.
     const GOLDEN_M2: u64 = 3370987513426964979;
+
+    #[test]
+    fn paint_writes_into_empty_only() {
+        let mut g = Grid::new(16, 16, 1);
+        g.set(8, 8, SAND);
+        g.paint(8, 8, 3, STONE); // disc covers the sand cell
+        assert_eq!(g.material_at(8, 8), SAND, "paint must not overwrite matter");
+        assert_eq!(g.material_at(8, 5), STONE, "but fills surrounding empties");
+    }
+
+    #[test]
+    fn paint_over_overwrites_existing() {
+        let mut g = Grid::new(16, 16, 1);
+        g.paint(8, 8, 3, SAND);
+        let sand_before = g.count(SAND);
+        assert!(sand_before > 0);
+        g.paint_over(8, 8, 3, STONE);
+        assert_eq!(g.material_at(8, 8), STONE, "overwrites the centre");
+        assert_eq!(g.count(SAND), 0, "all painted sand replaced");
+    }
+
+    #[test]
+    fn paint_line_leaves_no_gaps() {
+        // A single-cell brush dragged diagonally must paint a connected line, not
+        // dotted stamps (the bug a per-frame single stamp would produce).
+        let mut g = Grid::new(32, 32, 1);
+        g.paint_line(2, 2, 20, 14, 0, STONE, false);
+        // Every Bresenham cell on the way is filled; the endpoints are present.
+        assert_eq!(g.material_at(2, 2), STONE);
+        assert_eq!(g.material_at(20, 14), STONE);
+        // No 2-cell gap exists: each filled cell has a filled 8-neighbour ahead.
+        let painted: Vec<(usize, usize)> = (0..32)
+            .flat_map(|y| (0..32).map(move |x| (x, y)))
+            .filter(|&(x, y)| g.material_at(x, y) == STONE)
+            .collect();
+        assert!(painted.len() >= 18, "line spans its length: {}", painted.len());
+    }
+
+    #[test]
+    fn flood_fill_fills_enclosed_pocket() {
+        // A 10x10 stone box with a hollow interior; fill the interior with water.
+        let mut g = Grid::new(16, 16, 1);
+        for x in 3..=12 {
+            g.set(x, 3, STONE);
+            g.set(x, 12, STONE);
+        }
+        for y in 3..=12 {
+            g.set(3, y, STONE);
+            g.set(12, y, STONE);
+        }
+        g.flood_fill(7, 7, WATER);
+        assert_eq!(g.material_at(7, 7), WATER, "interior filled");
+        assert_eq!(g.material_at(4, 4), WATER, "fill reaches the corners inside");
+        assert_eq!(g.material_at(3, 3), STONE, "walls untouched");
+        assert_eq!(g.material_at(0, 0), EMPTY, "fill did not escape the box");
+    }
+
+    #[test]
+    fn flood_fill_replaces_contiguous_material() {
+        let mut g = Grid::new(16, 16, 1);
+        g.paint_over(8, 8, 3, SAND); // a sand blob
+        let blob = g.count(SAND);
+        g.set(0, 0, SAND); // a disconnected stray grain
+        g.flood_fill(8, 8, WATER); // click the blob
+        assert_eq!(g.material_at(8, 8), WATER);
+        assert_eq!(g.count(WATER), blob, "only the contiguous blob converted");
+        assert_eq!(g.material_at(0, 0), SAND, "the disconnected grain stays");
+    }
+
+    #[test]
+    fn flood_fill_noop_when_target_equals_fill() {
+        let mut g = Grid::new(8, 8, 1);
+        g.set(4, 4, WATER);
+        g.flood_fill(4, 4, WATER); // same material: must not loop or change
+        assert_eq!(g.count(WATER), 1);
+    }
 }
