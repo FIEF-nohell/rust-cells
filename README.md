@@ -49,12 +49,12 @@ to life.
 | Left drag | paint the selected element (into empty space); drags are continuous, no gaps |
 | Shift + left | overwrite existing matter, not just empty cells |
 | Right drag | erase |
-| Alt + left | eyedropper: pick the element under the cursor |
+| Middle click | eyedropper: pick the element under the cursor |
 | Ctrl + left / right | flood fill the contiguous region (right fills with empty) |
 | Mouse wheel | brush size (smallest is a single grid-snapped cell) |
-| `,` / `.` | slower / faster simulation (0.25x to 8x) |
+| `+` / `-` | faster / slower simulation (0.25x to 8x) |
 | Ctrl+Z / Ctrl+Y | undo / redo |
-| `+` / `-` / `0` | zoom in / out / reset |
+| Ctrl + wheel, `0` | zoom, reset zoom |
 | Middle drag, minimap click | pan the view |
 | Space, Right arrow | pause, single-step |
 | F1 | controls + interactions help |

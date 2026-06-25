@@ -318,13 +318,21 @@ async fn main() {
         // --- modifier keys (read once; used by typing guard + canvas tools) ---
         let ctrl = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
         let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
-        let alt = is_key_down(KeyCode::LeftAlt) || is_key_down(KeyCode::RightAlt);
 
-        // --- palette search typing (letters only; skip while a modifier is held
-        // so Ctrl+Z etc. never leak into the search box) ---
+        // --- char stream: Ctrl+letter shortcuts (undo/redo) and palette search.
+        // Driven by the typed character, not a physical KeyCode, so it respects
+        // the OS keyboard layout (e.g. QWERTZ, where the Z key emits KeyCode::Y). ---
+        let mut undo_req = false;
+        let mut redo_req = false;
         while let Some(c) = get_char_pressed() {
             let lc = c.to_ascii_lowercase();
-            if lc.is_ascii_alphabetic() && !ctrl && !alt {
+            if ctrl {
+                match lc {
+                    'z' => undo_req = true,
+                    'y' => redo_req = true,
+                    _ => {}
+                }
+            } else if lc.is_ascii_alphabetic() {
                 search.push(lc);
             }
         }
@@ -354,18 +362,18 @@ async fn main() {
         if is_key_pressed(KeyCode::Right) {
             do_single_step = true;
         }
-        // Simulation speed: `,` slower, `.` faster (clamped to the SPEEDS table).
-        if is_key_pressed(KeyCode::Comma) {
-            speed_idx = speed_idx.saturating_sub(1);
-        }
-        if is_key_pressed(KeyCode::Period) {
+        // Simulation speed: `-` slower, `+` faster (clamped to the SPEEDS table).
+        if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
             speed_idx = (speed_idx + 1).min(SPEEDS.len() - 1);
+        }
+        if is_key_pressed(KeyCode::Minus) || is_key_pressed(KeyCode::KpSubtract) {
+            speed_idx = speed_idx.saturating_sub(1);
         }
         let speed = SPEEDS[speed_idx];
 
-        // Undo (Ctrl+Z) / Redo (Ctrl+Y or Ctrl+Shift+Z). Snapshots are full
-        // serialized grids; restoring adopts the snapshot's dimensions.
-        if ctrl && !shift && is_key_pressed(KeyCode::Z) {
+        // Undo (Ctrl+Z) / Redo (Ctrl+Y), flagged from the layout-aware char stream.
+        // Snapshots are full serialized grids; restoring adopts their dimensions.
+        if undo_req {
             if let Some(blob) = undo.pop() {
                 redo.push(grid.serialize());
                 restore_grid(
@@ -382,7 +390,7 @@ async fn main() {
                 status = "undo".into();
             }
         }
-        if ctrl && (is_key_pressed(KeyCode::Y) || (shift && is_key_pressed(KeyCode::Z))) {
+        if redo_req {
             if let Some(blob) = redo.pop() {
                 undo.push(grid.serialize());
                 restore_grid(
@@ -433,14 +441,7 @@ async fn main() {
                 brush = brush.saturating_sub(1);
             }
         }
-        // Reliable keyboard zoom (no modifier): +/- and 0 to reset.
-        let (cx, cy) = (panel_x * 0.5, canvas_h * 0.5);
-        if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
-            apply_zoom(&mut zoom, &mut view_x, &mut view_y, cx, cy, 1.25);
-        }
-        if is_key_pressed(KeyCode::Minus) || is_key_pressed(KeyCode::KpSubtract) {
-            apply_zoom(&mut zoom, &mut view_x, &mut view_y, cx, cy, 1.0 / 1.25);
-        }
+        // Zoom is Ctrl+wheel; `0` resets it. (`+`/`-` drive sim speed instead.)
         if is_key_pressed(KeyCode::Key0) {
             zoom = 1.0;
             view_x = 0.0;
@@ -566,11 +567,13 @@ async fn main() {
             let (gx, gy) = (cell.0 as usize, cell.1 as usize);
             let lp = is_mouse_button_pressed(MouseButton::Left);
             let rp = is_mouse_button_pressed(MouseButton::Right);
+            let mp = is_mouse_button_pressed(MouseButton::Middle);
             let ld = is_mouse_button_down(MouseButton::Left);
             let rd = is_mouse_button_down(MouseButton::Right);
 
-            if alt && lp {
-                // Eyedropper: pick the material under the cursor.
+            if mp {
+                // Eyedropper: middle-click picks the material under the cursor.
+                // (A middle-drag still pans; a plain click just picks.)
                 let m = grid.material_at(gx, gy);
                 if material::user_paintable(m) {
                     selected = m;
@@ -581,7 +584,7 @@ async fn main() {
                 push_undo(&mut undo, &mut redo, &grid);
                 grid.flood_fill(gx, gy, if rp { EMPTY } else { selected });
                 status = "filled".into();
-            } else if (ld || rd) && !ctrl && !alt {
+            } else if (ld || rd) && !ctrl {
                 // Continuous brush stroke. Snapshot once at the start of a drag,
                 // then paint a line from the previous cell so fast drags leave no
                 // gaps. Left paints (Shift = overwrite matter); Right erases.
@@ -983,7 +986,7 @@ fn draw_hud(
     draw_rectangle(0.0, sim_h, sim_w, BAR_H, c_header());
     draw_line(0.0, sim_h, sim_w, sim_h, 1.0, cola(70, 74, 90, 200));
     draw_text(
-        "L paint  R erase  Shift overwrite  Alt pick  Ctrl fill  wheel brush  ,/. speed  Ctrl+Z/Y undo  Space pause  F1 help",
+        "L paint  R erase  Shift overwrite  Mid-click pick  Ctrl fill  wheel brush  +/- speed  Ctrl+Z/Y undo  Space pause  F1 help",
         10.0,
         sim_h + 17.0,
         15.0,
@@ -1161,14 +1164,14 @@ fn draw_help() {
         ("Left drag", "paint selected element (into empty)"),
         ("Shift + left", "overwrite existing matter"),
         ("Right drag", "erase"),
-        ("Alt + left", "eyedropper - pick element under cursor"),
+        ("Middle click", "eyedropper - pick element under cursor"),
         ("Ctrl + left/right", "flood fill region (right = empty)"),
         ("Mouse wheel", "brush size   (Ctrl+wheel = zoom)"),
-        (", / .", "slower / faster simulation"),
+        ("+ / -", "faster / slower simulation"),
         ("Ctrl+Z / Ctrl+Y", "undo / redo"),
         ("Space / Right", "pause / single step"),
-        ("+ / - / 0", "zoom in / out / reset"),
-        ("Mid-drag, minimap", "pan the view"),
+        ("0", "reset zoom"),
+        ("Middle drag, minimap", "pan the view"),
         ("F2", "temperature overlay"),
         ("F5 / F9 / F8", "save / load / load showcase"),
         ("Del", "clear canvas"),
